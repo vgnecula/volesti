@@ -493,7 +493,6 @@ void exponential_sampling(PointList &randPoints,
             walkInstance.apply(starting_point, c, a, eta, walk_len);
         }
     }
-\
     for (unsigned int i = 0; i < rnum; ++i) {
         walkInstance.apply(starting_point, c, a, eta, walk_len);
         randPoints.push_back(starting_point);
