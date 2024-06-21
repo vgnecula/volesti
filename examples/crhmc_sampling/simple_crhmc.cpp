@@ -49,14 +49,19 @@ void sample_hpoly(int n_samples = 80000,
   Func * f = new Func;
   Grad * g = new Grad;
   std::list<Point> PointList;
+  
   execute_crhmc< PolytopeType, RNG, std::list<Point>, Grad, Func, Hess, CRHMCWalk, simdLen>(
       HP, rng, PointList, 1, n_samples, n_burns, g, f);
   MT samples = MT(dimension, PointList.size());
+
+  //store the points into a matrix
   int i=0;
   for (std::list<Point>::iterator it = PointList.begin(); it != PointList.end(); ++it){
     samples.col(i) = (*it).getCoefficients();
     i++;
   }
+
+  //diagnostics
   std::cerr<<"max_psrf: "<< max_interval_psrf<NT,VT,MT>(samples)<<"\n";
   std::ofstream samples_stream;
   samples_stream.open("CRHMC_SIMD_" + std::to_string(simdLen) + "_" +
@@ -64,6 +69,7 @@ void sample_hpoly(int n_samples = 80000,
   samples_stream << samples.transpose() << std::endl;
   delete f;
   delete g;
+
 }
 
 template<int simdLen>

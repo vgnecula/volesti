@@ -1,26 +1,31 @@
 // VolEsti (volume computation and sampling library)
 
-// Copyright (c) 2012-2020 Vissarion Fisikopoulos
-// Copyright (c) 2018-2020 Apostolos Chalkis
-// Copyright (c) 2022-2022 Ioannis Iakovidis
-
-// Contributed and/or modified by Ioannis Iakovidis, as part of Google Summer of
-// Code 2022 program.
-
-// Licensed under GNU LGPL.3, see LICENCE file
-
-// References
-// Yunbum Kook, Yin Tat Lee, Ruoqi Shen, Santosh S. Vempala. "Sampling with
-// Riemannian Hamiltonian
-// Monte Carlo in a Constrained Space"
-#ifndef CRHMC_WALK_HPP
-#define CRHMC_WALK_HPP
 #include "generators/boost_random_number_generator.hpp"
 #include "ode_solvers/ode_solvers.hpp"
 #include "random_walks/crhmc/additional_units/auto_tuner.hpp"
 #include "random_walks/gaussian_helpers.hpp"
+
+//newly added 
+#include "ode_solvers/ode_solvers.hpp"
+#include "preprocess/crhmc/crhmc_input.h"
+#include "preprocess/crhmc/crhmc_problem.h"
+#include "Eigen/Eigen"
+#include "cartesian_geom/cartesian_kernel.h"
+#include "volume/sampling_policies.hpp"
+#include "preprocess/crhmc/crhmc_input.h"
+#include "preprocess/crhmc/crhmc_problem.h"
+#include "preprocess/crhmc/opts.h"
+#include "sampling/random_point_generators.hpp"
+#include "sampling/sampling.hpp"
+#include "misc/misc.h"
+#include "random.hpp"
+#include <vector>
+#include "random_walks/random_walks.hpp"
+#include "generators/known_polytope_generators.h"
+
+#include <typeinfo> // Needed for typeid
 #include <chrono>
-struct CRHMCWalk {
+struct GaussianCRHMCWalk {
   template
   <
     typename NT,
@@ -47,22 +52,45 @@ struct CRHMCWalk {
 
   template
   <
-    typename Point,
-    typename Polytope,
-    typename RandomNumberGenerator,
-    typename NegativeGradientFunctor,
-    typename NegativeLogprobFunctor,
-    typename Solver
+    //typename Point,
+    typename Polytope, //this is passed as a Polytope from the cooling gaussians
+                       // however it in the crhmc walk it is a CrhmcProblem
+    typename RandomNumberGenerator
+    //typename NegativeGradientFunctor,
+    //typename NegativeLogprobFunctor,
+    //typename Solver
   >
   struct Walk {
-    using point = Point;
+    //transform the Polytoipe into a crhmc problem
+
+    //Defining all the types we need
+    typedef typename Polytope::PointType Point;
+
     using pts = std::vector<Point>;
     using NT = typename Point::FT;
     using VT = Eigen::Matrix<NT, Eigen::Dynamic, 1>;
     using MT = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>;
-    using Sampler = CRHMCWalk::Walk<Point, Polytope, RandomNumberGenerator,
-                                    NegativeGradientFunctor,
-                                    NegativeLogprobFunctor, Solver>;
+
+    //Defining the Functors and Solver
+    using NegativeLogprobFunctor = GaussianFunctor::FunctionFunctor<Point>; //Func
+    using NegativeGradientFunctor = GaussianFunctor::GradientFunctor<Point>; //Grad
+    using HessianFunctor = GaussianFunctor::HessianFunctor<Point>; //Hess
+    using func_params = GaussianFunctor::parameters<NT, Point>;
+    
+    using Input = crhmc_input<MT, Point, NegativeLogprobFunctor, NegativeGradientFunctor, HessianFunctor>;
+  
+    using CrhmcProblem = crhmc_problem<Point, Input>;
+    
+    //FIXME
+    //simdLen = 1, figure this out later
+    //it is already inside the soolver simdLen = 1
+    static constexpr int simdLen = 1;
+    using Solver =
+        ImplicitMidpointODESolver<Point, NT, CrhmcProblem, NegativeGradientFunctor, simdLen>;
+
+    //FIXME
+    //Changed the syntax, look into
+    using Sampler = GaussianCRHMCWalk::Walk<Polytope, RandomNumberGenerator>;
 
     using Opts = typename Polytope::Opts;
     using IVT = Eigen::Matrix<int, Eigen::Dynamic, 1>;
@@ -93,7 +121,6 @@ struct CRHMCWalk {
     bool accepted;
     IVT accept;
     bool update_modules;
-    int simdLen;
     // References to xs
     MT x, v;
 
@@ -115,15 +142,25 @@ struct CRHMCWalk {
     std::chrono::duration<double> H_duration = std::chrono::duration<double>::zero();
 #endif
     Walk(Polytope &Problem,
-      Point &p,
-      NegativeGradientFunctor &neg_grad_f,
-      NegativeLogprobFunctor &neg_logprob_f,
-      parameters<NT, NegativeGradientFunctor> &param) :
-      params(param),
-      P(Problem),
-      F(neg_grad_f),
-      f(neg_logprob_f)
+        Point &p,
+        NT const& a_i, 
+        RandomNumberGenerator &rng
+      //NegativeGradientFunctor &neg_grad_f,
+      //NegativeLogprobFunctor &neg_logprob_f,
+      //parameters<NT, NegativeGradientFunctor> &param
+      )
     {
+
+      //building the functions
+      func_params param = func_params(p, a_i, 1.0);
+      NegativeGradientFunctor neg_grad_f(params);
+      NegativeLogprobFunctor neg_logprob_f(params);
+      HessianFunctor hess_f(params);
+
+      params = param;
+      P = Problem;
+      F = neg_grad_f;
+      f = neg_logprob_f;
 
       dim = p.dimension();
       simdLen = params.options.simdLen;
@@ -255,4 +292,4 @@ struct CRHMCWalk {
   };
 };
 
-#endif
+

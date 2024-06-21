@@ -191,7 +191,6 @@ struct GaussianRandomPointGenerator
 };
 
 
-
 template <typename Walk>
 struct BoundaryRandomPointGenerator
 {

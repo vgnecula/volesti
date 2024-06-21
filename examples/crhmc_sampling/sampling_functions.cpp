@@ -33,36 +33,66 @@ using Point = typename Kernel::Point;
 using Func = GaussianFunctor::FunctionFunctor<Point>;
 using Grad = GaussianFunctor::GradientFunctor<Point>;
 using Hess = GaussianFunctor::HessianFunctor<Point>;
+
+using NegativeLogprobFunctor = GaussianFunctor::FunctionFunctor<Point>; //Func
+using NegativeGradientFunctor = GaussianFunctor::GradientFunctor<Point>; //Grad
+using HessianFunctor = GaussianFunctor::HessianFunctor<Point>; //Hess
+
 using PolytopeType = HPolytope<Point>;
 using MT = PolytopeType::MT;
 using VT = Eigen::Matrix<NT, Eigen::Dynamic, 1>;
 using func_params = GaussianFunctor::parameters<NT, Point>;
 using RNG = BoostRandomNumberGenerator<boost::mt19937, NT>;
+
+
 template <int simdLen>
 void sample_hpoly(int n_samples = 80000,
-              int n_burns = 20000) {
+              int n_burns = 20000) 
+{
+  //Samples a Simplex
   std::string problem_name("simplex");
   std::cerr << "CRHMC on " << problem_name << "\n";
-  using Input = crhmc_input<MT, Point, Func, Grad, Hess>;
+
+  //Param building
+  //using Input = crhmc_input<MT, Point, Func, Grad, Hess>;
+  //using CrhmcProblem = crhmc_problem<Point, Input>;
+  using Input = crhmc_input<MT, Point, NegativeLogprobFunctor, NegativeGradientFunctor, HessianFunctor>;
   using CrhmcProblem = crhmc_problem<Point, Input>;
+   
+
+
+  //using Solver =
+     // ImplicitMidpointODESolver<Point, NT, CrhmcProblem, Input::Grad, simdLen>;
   using Solver =
-      ImplicitMidpointODESolver<Point, NT, CrhmcProblem, Input::Grad, simdLen>;
+        ImplicitMidpointODESolver<Point, NT, CrhmcProblem, Input::Grad, simdLen>;
+
+  
   RNG rng(1);
   PolytopeType HP=generate_simplex<PolytopeType>(2,false);
   int dimension = HP.dimension();
+
+  //VARFLAG!!!
   func_params params = func_params(Point(dimension), 0.5, 1);
+  
   Func f(params);
   Grad g(params);
   Hess h(params);
   std::list<Point> PointList;
-  crhmc_sampling<std::list<Point>, PolytopeType, RNG, CRHMCWalk, NT, Point, Grad, Func, Hess, Solver>(
-      PointList, HP, rng, 1, n_samples, n_burns, g, f, h, simdLen);
+
+
+  //CRHMC sampling
+  crhmc_sampling<std::list<Point>, PolytopeType, RNG, CRHMCWalk, NT, Point, Grad, Func, Hess, Solver>
+    (PointList, HP, rng, 1, n_samples, n_burns, g, f, h, simdLen);
+  
+  //store the points into a matrix
   MT samples = MT(dimension, PointList.size());
   int i=0;
   for (std::list<Point>::iterator it = PointList.begin(); it != PointList.end(); ++it){
     samples.col(i) = (*it).getCoefficients();
     i++;
   }
+
+  //diagnostics
   std::ofstream diagnostics_stream;
   diagnostics_stream.open("CRHMC_SIMD_" + std::to_string(simdLen) + "_" +
                           problem_name + "_diagnostics.txt");
@@ -71,6 +101,7 @@ void sample_hpoly(int n_samples = 80000,
   samples_stream.open("CRHMC_SIMD_" + std::to_string(simdLen) + "_" +
                       problem_name + "_samples.txt");
   samples_stream << samples.transpose() << std::endl;
+
 }
 
 template <int simdLen>

@@ -41,7 +41,8 @@ struct ZeroScalarFunctor
 
 ///
 /// Input structure: With this the user can define the input for a crhmc polytope sampling problem
-template <typename MatrixType, typename Point,
+template <typename MatrixType, 
+          typename Point,
           typename func = ZeroScalarFunctor<Point>,
           typename grad = ZeroFunctor<Point>,
           typename hess = ZeroFunctor<Point>>

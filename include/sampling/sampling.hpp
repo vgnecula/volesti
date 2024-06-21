@@ -318,9 +318,12 @@ void crhmc_sampling(PointList &randPoints,
                   NegativeGradientFunctor,
                   HessianFunctor
           > Input;
+
   Input input = convert2crhmc_input<Input, Polytope, NegativeLogprobFunctor, NegativeGradientFunctor, HessianFunctor>(P, f, F, h);
+
   typedef crhmc_problem<Point, Input> CrhmcProblem;
   CrhmcProblem problem = CrhmcProblem(input);
+
   if(problem.terminate){return;}
   typedef typename WalkTypePolicy::template Walk
           <
@@ -331,11 +334,13 @@ void crhmc_sampling(PointList &randPoints,
                   NegativeLogprobFunctor,
                   Solver
           > walk;
+
   typedef typename WalkTypePolicy::template parameters
           <
                   NT,
                   NegativeGradientFunctor
           > walk_params;
+          
   Point p = Point(problem.center);
   problem.options.simdLen=simdLen;
   walk_params params(input.df, p.dimension(), problem.options);
@@ -403,36 +408,37 @@ crhmc_sampling <
   simdLen
   >
 >(randPoints, P, rng, walkL, numpoints, nburns, *F, *f, *h, simdLen, raw_output);
-}else{
-  typedef  crhmc_input
-        <
-                MatrixType,
+}       else{
+        typedef  crhmc_input<
+                        MatrixType,
+                        Point,
+                        NegativeLogprobFunctor,
+                        NegativeGradientFunctor,
+                        ZeroFunctor<Point>
+                > Input;
+
+        typedef crhmc_problem<Point, Input> CrhmcProblem;
+        ZeroFunctor<Point> zerof;
+
+        crhmc_sampling <
+                PointList,
+                Polytope,
+                RNGType,
+                CRHMCWalk,
+                NT,
                 Point,
-                NegativeLogprobFunctor,
                 NegativeGradientFunctor,
-                ZeroFunctor<Point>
-        > Input;
-  typedef crhmc_problem<Point, Input> CrhmcProblem;
-  ZeroFunctor<Point> zerof;
-crhmc_sampling <
-  PointList,
-  Polytope,
-  RNGType,
-  CRHMCWalk,
-  NT,
-  Point,
-  NegativeGradientFunctor,
-  NegativeLogprobFunctor,
-  ZeroFunctor<Point>,
-  ImplicitMidpointODESolver <
-  Point,
-  NT,
-  CrhmcProblem,
-  NegativeGradientFunctor,
-  simdLen
-  >
->(randPoints, P, rng, walkL, numpoints, nburns, *F, *f, zerof, simdLen, raw_output);
-}
+                NegativeLogprobFunctor,
+                ZeroFunctor<Point>,
+                ImplicitMidpointODESolver <
+                        Point,
+                        NT,
+                        CrhmcProblem,
+                        NegativeGradientFunctor,
+                        simdLen
+                        >
+                >(randPoints, P, rng, walkL, numpoints, nburns, *F, *f, zerof, simdLen, raw_output);
+        }
 }
 template
 <
