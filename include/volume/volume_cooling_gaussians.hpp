@@ -10,7 +10,7 @@
 #ifndef VOLUME_COOLING_GAUSSIANS_HPP
 #define VOLUME_COOLING_GAUSSIANS_HPP
 
-//#define VOLESTI_DEBUG
+#define VOLESTI_DEBUG
 
 #include <iterator>
 #include <vector>

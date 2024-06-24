@@ -103,17 +103,42 @@ struct ImplicitMidpointODESolver {
   void step(int k, bool accepted) {
     num_runs++;
     pts partialDerivatives;
+
 #ifdef TIME_KEEPING
     start = std::chrono::system_clock::now();
 #endif
+    
+    
     partialDerivatives = ham.DU(xs);
+    std::cout << "+++++" <<std::endl;
+    
+    for (int j = 0; j < partialDerivatives.size(); j++) {
+      std::cout << "state " << j << ": \n";
+      std::cout << partialDerivatives[j];
+      std::cout << '\n';
+    }
+
 #ifdef TIME_KEEPING
     end = std::chrono::system_clock::now();
     DU_duration += end - start;
 #endif
-    xs = xs + partialDerivatives * (eta / 2);
+    
+    std :: cout << "XS rows " << xs[0].rows() <<std::endl;
+    std :: cout << "Partial " << partialDerivatives[0].rows() <<std::endl;
+    
+    //xs = xs + partialDerivatives * (eta / 2);
     xs_prev = xs;
     done = false;
+
+    std::cout << "######" << std::endl;
+    for (int j = 0; j < xs.size(); j++) {
+      std::cout << "state " << j << ": \n";
+      std::cout << xs[j];
+      std::cout << '\n';
+    }
+
+
+    /*
     nu = MT::Zero(P.equations(), simdLen);
     for (int i = 0; i < options.maxODEStep; i++) {
       pts xs_old = xs;
@@ -128,6 +153,7 @@ struct ImplicitMidpointODESolver {
       approxDK_duration += end - start;
 #endif
       xs = xs_prev + partialDerivatives * (eta);
+
       VT dist = ham.x_norm(xmid, xs - xs_old) / eta;
       NT maxdist = dist.maxCoeff();
       //If the estimate does not change terminate
@@ -137,11 +163,13 @@ struct ImplicitMidpointODESolver {
         break;
       //If the estimate is very bad, sample another velocity
     } else if (maxdist > options.convergence_bound) {
-        xs = xs * std::nan("1");
+        //xs = xs * std::nan("1");
+        
         done = true;
         num_steps = i;
         break;
       }
+
     }
 #ifdef TIME_KEEPING
     start = std::chrono::system_clock::now();
@@ -151,11 +179,13 @@ struct ImplicitMidpointODESolver {
     end = std::chrono::system_clock::now();
     DU_duration += end - start;
 #endif
-    xs = xs + partialDerivatives * (eta / 2);
-    ham.project(xs);
+*/
+    //xs = xs + partialDerivatives * (eta / 2);
+    //ham.project(xs);
   }
 
   void steps(int num_steps, bool accepted) {
+
     for (int i = 0; i < num_steps; i++) {
       step(i, accepted);
     }
@@ -163,7 +193,14 @@ struct ImplicitMidpointODESolver {
 
   MT get_state(int index) { return xs[index]; }
 
-  void set_state(int index, MT p) { xs[index] = p; }
+  void set_state(int index, MT p) { 
+      xs[index] = p; 
+      for (int j = 0; j < xs.size(); j++) {
+      std::cout << "state " << j << ": \n";
+      std::cout << xs[j];
+      std::cout << '\n';
+    }
+  }
   template<typename StreamType>
   void print_state(StreamType &stream) {
     for (int j = 0; j < xs.size(); j++) {

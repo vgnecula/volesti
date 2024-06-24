@@ -63,6 +63,9 @@ GetBoost()
 include("../../external/cmake-files/LPSolve.cmake")
 GetLPSolve()
 
+include("../../external/cmake-files/QD.cmake")
+GetQD()
+
 # Find lpsolve library
 find_library(LP_SOLVE NAMES liblpsolve55.so PATHS /usr/lib/lp_solve)
 

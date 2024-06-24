@@ -6,7 +6,7 @@
 
 #include "random_walks/random_walks.hpp"
 #include "volume/volume_sequence_of_balls.hpp"
-#include "volume/volume_cooling_gaussians.hpp"
+#include "volume/volume_cooling_gaussians_crhmc.hpp"
 #include "volume/volume_cooling_balls.hpp"
 
 #include <iostream>
@@ -24,7 +24,7 @@ void calculateAndVerifyVolume(HPOLYTOPE& polytope, const std::string& descriptio
     NT e = 0.1;
 
     std::cout << "Calculating volume for " << description << ":\n";
-    NT volume = volume_cooling_gaussians<GaussianHamiltonianMonteCarloExactWalk, RNGType>(polytope, e, walk_len);
+    NT volume = volume_cooling_gaussians<CRHMCWalk, RNGType>(polytope, e, walk_len);
 
     std::cout << "Estimated volume: " << volume << "\n";
     std::cout << "Expected volume: " << expectedVolume << "\n";
@@ -42,7 +42,7 @@ int main() {
     // 3-dimensional cube
     HPOLYTOPE cube = generate_cube<HPOLYTOPE>(3, false);
     calculateAndVerifyVolume(cube, "3-dimensional cube", 8.0, epsilon);
-
+/*
     // 3-dimensional cross polytope
     HPOLYTOPE crossPolytope = generate_cross<HPOLYTOPE>(3, false);
     calculateAndVerifyVolume(crossPolytope, "3-dimensional cross polytope", 4.0 / 6.0, epsilon);
@@ -54,6 +54,6 @@ int main() {
     // birkhoff polytope dimension 3 
     HPOLYTOPE birkhoffPolytope = generate_birkhoff<HPOLYTOPE>(3);
     calculateAndVerifyVolume(birkhoffPolytope, "Birkhoff polytope (dim 3)", -1, epsilon);  // Theoretical volume not easily available
-
+*/
     return 0;
 }

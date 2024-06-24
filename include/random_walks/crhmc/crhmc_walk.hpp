@@ -181,6 +181,7 @@ struct CRHMCWalk {
       num_runs++;
       //  Pick a random velocity with momentum
       v = get_direction_with_momentum(dim, rng, x, v, params.momentum, false);
+      
       solver->set_state(0, x);
       solver->set_state(1, v);
       // Get proposals

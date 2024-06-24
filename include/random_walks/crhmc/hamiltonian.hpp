@@ -185,8 +185,19 @@ public:
   // This is only dependent on x and so DU/Dv=0
   pts DU(pts const &x_bar)
   {
+    std::cout << "------------------------------------------" <<std::endl;
+    for (int j = 0; j < x_bar.size(); j++) {
+      std::cout << std::endl;
+      std::cout << "state " << j << ": \n";
+      std::cout << x_bar[j];
+      std::cout << '\n';
+    }
+    
     MT x = x_bar[0];
     move(x_bar);
+    
+    std::cout << "*****" <<std::endl;
+    std::cout << x << std:: endl;
     if (!prepared || dUDx_empty) {
       prepare(x_bar);
       solver.leverageScoreComplement((Tx *)lsc.data());
