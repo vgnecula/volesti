@@ -70,7 +70,7 @@ void sample_hpoly(int n_samples = 80000,
   RNG rng(1);
   PolytopeType HP=generate_simplex<PolytopeType>(2,false);
   int dimension = HP.dimension();
-
+  HP.print();
   //VARFLAG!!!
   func_params params = func_params(Point(dimension), 0.5, 1);
   

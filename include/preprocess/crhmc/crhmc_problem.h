@@ -470,7 +470,9 @@ public:
       }
       Asp = A.sparseView();
     }
+
     void make_format(Input const &input, SpMat const &S) {
+
       nP = input.Aeq.cols();
       int nIneq = input.Aineq.rows();
       int nEq = input.Aeq.rows();
@@ -505,6 +507,7 @@ public:
         }
       }
       Asp.makeCompressed();
+
     }
 //Class constructor
   crhmc_problem(Input const &input, Opts _options = Opts())
@@ -517,7 +520,6 @@ public:
             shift_barrier_duration = lewis_center_duration =
                 std::chrono::duration<double>::zero();
 #endif
-
     make_format(input, input.Aeq);
     PreproccessProblem();
   }

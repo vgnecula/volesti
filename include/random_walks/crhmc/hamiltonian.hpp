@@ -62,8 +62,11 @@ public:
   {
     n = P.dimension();
     m = P.equations();
+    std::cout << "N " << n << std::endl;
+    std::cout << "M " << m << std::endl;
     x = MT::Zero(n, simdLen);
     xs = {x, x};
+    
     lsc = MT::Zero(simdLen, n);
     solver.accuracyThreshold = options.solver_accuracy_threshold;
     if (options.DynamicWeight)
@@ -185,19 +188,19 @@ public:
   // This is only dependent on x and so DU/Dv=0
   pts DU(pts const &x_bar)
   {
-    std::cout << "------------------------------------------" <<std::endl;
-    for (int j = 0; j < x_bar.size(); j++) {
-      std::cout << std::endl;
-      std::cout << "state " << j << ": \n";
-      std::cout << x_bar[j];
-      std::cout << '\n';
-    }
+    //std::cout << "------------------------------------------" <<std::endl;
+    //for (int j = 0; j < x_bar.size(); j++) {
+    //  std::cout << std::endl;
+    //  std::cout << "state " << j << ": \n";
+    //  std::cout << x_bar[j];
+    //  std::cout << '\n';
+    //}
     
     MT x = x_bar[0];
     move(x_bar);
     
-    std::cout << "*****" <<std::endl;
-    std::cout << x << std:: endl;
+    //std::cout << "*****" <<std::endl;
+    //std::cout << x << std:: endl;
     if (!prepared || dUDx_empty) {
       prepare(x_bar);
       solver.leverageScoreComplement((Tx *)lsc.data());
@@ -213,7 +216,9 @@ public:
       }
       dUDx_empty = false;
     }
-
+    //std::cout << "########################" << std::endl ;
+    //std::cout << "Dimension: " << n << std::endl ;
+    //std::cout << "########################" << std::endl ;
     return {MT::Zero(n, simdLen), -last_dUdx};
   }
   // Compute the computations involving only x iff x has been changed

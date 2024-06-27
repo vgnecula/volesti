@@ -2,7 +2,7 @@
 #ifndef VOLUME_COOLING_GAUSSIANS_HPP
 #define VOLUME_COOLING_GAUSSIANS_HPP
 
-#define VOLESTI_DEBUG
+//#define VOLESTI_DEBUG
 
 #include <iterator>
 #include <vector>
@@ -164,7 +164,12 @@ NT get_next_gaussian(Polytope& P,
                      const NT &ratio,
                      const NT &C,
                      const unsigned int& walk_length,
-                     RandomNumberGenerator& rng)
+                     RandomNumberGenerator& rng,
+                     Grad& g,
+                     Func& f,
+                     walk_params& parameters,
+                     CrhmcProblem& problem,
+                     WalkType& crhmc_walk)
 {
 
     NT last_a = a;
@@ -177,38 +182,14 @@ NT get_next_gaussian(Polytope& P,
     std::list<Point> randPoints;
     typedef typename std::vector<NT>::iterator viterator;
 
-    //create the functors
-    //VARFLAG!!!
-    int dimension = P.dimension();
-    func_params f_params = func_params(Point(dimension), 0.5, 1);
-    
-    Func f(f_params);
-    Grad g(f_params);
-    Hess h(f_params);
-
-    //create the crhmc problem
-    Input input = convert2crhmc_input<Input, Polytope, NegativeLogprobFunctor, NegativeGradientFunctor, HessianFunctor>(P, f, g, h);
-
-    typedef crhmc_problem<Point, Input> CrhmcProblem;
-    CrhmcProblem problem = CrhmcProblem(input);
-
-    if(problem.terminate){return 0;}
-
-    problem.options.simdLen=simdLen;
-    walk_params params(input.df, p.dimension(), problem.options);
-
-    if (input.df.params.eta > 0) {
-        params.eta = input.df.params.eta;
-    }
-
-    WalkType crhmc_walk = WalkType(problem, p, input.df, input.f, params);
-
     //sample N points
     PushBackWalkPolicy push_back_policy;
     bool raw_output = false; 
-    RandomPointGenerator::apply(problem, p, N, walk_length, randPoints,
-                                push_back_policy, rng, g, f, params, crhmc_walk, simdLen, raw_output);
 
+    RandomPointGenerator::apply(problem, p, N, walk_length, randPoints,
+                                push_back_policy, rng, g, f, parameters, crhmc_walk, simdLen, raw_output);
+
+    
     while (!done)
     {
         NT new_a = last_a * std::pow(ratio,k);
@@ -264,7 +245,6 @@ void compute_annealing_schedule(Polytope& P,
 
     // Compute the first gaussian
     get_first_gaussian(P, frac, chebychev_radius, error, a_vals);
-
     NT a_stop = 0.0;
     const NT tol = 0.001;
     unsigned int it = 0;
@@ -285,19 +265,13 @@ void compute_annealing_schedule(Polytope& P,
 
     while (true)
     {
-        // Compute the next gaussian
-        NT next_a = get_next_gaussian<WalkType, walk_params, RandomPointGenerator>
-                      (P, p, a_vals[it], N, ratio, C, walk_length, rng);
-
-#ifdef VOLESTI_DEBUG
-    std::cout<<"Next Gaussian " << next_a <<std::endl;
-#endif
 
         NT curr_fn = 0;
         NT curr_its = 0;
         auto steps = totalSteps;
 
-        //creating the walk object
+        
+        //create the crhmc problem for this variance
         int dimension = P.dimension();
         func_params f_params = func_params(Point(dimension), a_vals[it], 1);
         
@@ -305,11 +279,11 @@ void compute_annealing_schedule(Polytope& P,
         Grad g(f_params);
         Hess h(f_params);
 
-        //create the crhmc problem
         Input input = convert2crhmc_input<Input, Polytope, NegativeLogprobFunctor, NegativeGradientFunctor, HessianFunctor>(P, f, g, h);
 
         typedef crhmc_problem<Point, Input> CrhmcProblem;
         CrhmcProblem problem = CrhmcProblem(input);
+
 
         if(problem.terminate){return;}
 
@@ -320,16 +294,21 @@ void compute_annealing_schedule(Polytope& P,
             params.eta = input.df.params.eta;
         }
 
+        //create the walk object for this problem
         WalkType walk = WalkType(problem, p, input.df, input.f, params);
 
-
-
         //TODO: test update delta here?
-
         update_delta<WalkType>
                 ::apply(walk, 4.0 * chebychev_radius
                         / std::sqrt(std::max(NT(1.0), a_vals[it]) * NT(n)));
 
+
+        // Compute the next gaussian
+        NT next_a = get_next_gaussian<WalkType, walk_params, RandomPointGenerator>
+                      (P, p, a_vals[it], N, ratio, C, walk_length, rng, g, f, params, problem, walk);
+#ifdef VOLESTI_DEBUG
+    std::cout<<"Next Gaussian " << next_a <<std::endl;
+#endif
 
         // Compute some ratios to decide if this is the last gaussian
         for (unsigned  int j = 0; j < steps; j++)

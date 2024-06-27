@@ -108,37 +108,28 @@ struct ImplicitMidpointODESolver {
     start = std::chrono::system_clock::now();
 #endif
     
-    
     partialDerivatives = ham.DU(xs);
-    std::cout << "+++++" <<std::endl;
-    
-    for (int j = 0; j < partialDerivatives.size(); j++) {
-      std::cout << "state " << j << ": \n";
-      std::cout << partialDerivatives[j];
-      std::cout << '\n';
-    }
 
 #ifdef TIME_KEEPING
     end = std::chrono::system_clock::now();
     DU_duration += end - start;
 #endif
     
-    std :: cout << "XS rows " << xs[0].rows() <<std::endl;
-    std :: cout << "Partial " << partialDerivatives[0].rows() <<std::endl;
-    
-    //xs = xs + partialDerivatives * (eta / 2);
+    //std :: cout << "XS rows " << xs[0].rows() <<std::endl;
+    //std :: cout << "Partial " << partialDerivatives[0].rows() <<std::endl;
+  
+    xs = xs + partialDerivatives * (eta / 2);
     xs_prev = xs;
     done = false;
 
-    std::cout << "######" << std::endl;
-    for (int j = 0; j < xs.size(); j++) {
-      std::cout << "state " << j << ": \n";
-      std::cout << xs[j];
-      std::cout << '\n';
-    }
+    //std::cout << "######" << std::endl;
+    //for (int j = 0; j < xs.size(); j++) {
+      //std::cout << "state " << j << ": \n";
+      //std::cout << xs[j];
+      //std::cout << '\n';
+    //}
 
-
-    /*
+/*
     nu = MT::Zero(P.equations(), simdLen);
     for (int i = 0; i < options.maxODEStep; i++) {
       pts xs_old = xs;
@@ -179,9 +170,10 @@ struct ImplicitMidpointODESolver {
     end = std::chrono::system_clock::now();
     DU_duration += end - start;
 #endif
+
+    xs = xs + partialDerivatives * (eta / 2);
+    ham.project(xs);
 */
-    //xs = xs + partialDerivatives * (eta / 2);
-    //ham.project(xs);
   }
 
   void steps(int num_steps, bool accepted) {
@@ -195,11 +187,11 @@ struct ImplicitMidpointODESolver {
 
   void set_state(int index, MT p) { 
       xs[index] = p; 
-      for (int j = 0; j < xs.size(); j++) {
-      std::cout << "state " << j << ": \n";
-      std::cout << xs[j];
-      std::cout << '\n';
-    }
+      //for (int j = 0; j < xs.size(); j++) {
+      //std::cout << "state " << j << ": \n";
+      //std::cout << xs[j];
+      //std::cout << '\n';
+    //}
   }
   template<typename StreamType>
   void print_state(StreamType &stream) {

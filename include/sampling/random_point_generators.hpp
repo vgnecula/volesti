@@ -309,6 +309,7 @@ struct CrhmcRandomPointGenerator
             for(int j=0; j<x.cols();j++){
               Point p = Point(x.col(j));
               policy.apply(randPoints, p);
+
             }
         }
     }

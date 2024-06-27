@@ -114,6 +114,7 @@ struct CRHMCWalk {
     std::chrono::time_point<std::chrono::high_resolution_clock> start, end;
     std::chrono::duration<double> H_duration = std::chrono::duration<double>::zero();
 #endif
+    
     Walk(Polytope &Problem,
       Point &p,
       NegativeGradientFunctor &neg_grad_f,
@@ -130,6 +131,7 @@ struct CRHMCWalk {
       // Starting point is provided from outside
       x = p.getCoefficients() * MT::Ones(1, simdLen); 
       accepted = false;
+    
       // Initialize solver
       solver = std::unique_ptr<Solver>(new Solver(0.0, params.eta, {x, x}, F, Problem, params.options));
       v = MT::Zero(dim, simdLen);
@@ -181,13 +183,14 @@ struct CRHMCWalk {
       num_runs++;
       //  Pick a random velocity with momentum
       v = get_direction_with_momentum(dim, rng, x, v, params.momentum, false);
-      
+      ;
       solver->set_state(0, x);
       solver->set_state(1, v);
       // Get proposals
       solver->steps(walk_length, accepted);
       x_tilde = solver->get_state(0);
       v_tilde = solver->get_state(1);
+
       if (metropolis_filter) {
 #ifdef TIME_KEEPING
         start = std::chrono::system_clock::now();
