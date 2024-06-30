@@ -62,6 +62,7 @@ public:
   using Hess = typename Input::Hess;
   using Crhmc_problem=crhmc_problem<Point, Input>;
 
+  int cnt = 0;
   unsigned int _d; // dimension
   // Problem variables Ax=b st lb<=x<=ub
   MT A;            // matrix A input matrix

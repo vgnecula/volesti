@@ -335,7 +335,7 @@ void crhmc_sampling(PointList &randPoints,
                   NegativeLogprobFunctor,
                   Solver
           > walk;
-
+        std::cout<<"-----------------------------";
   typedef typename WalkTypePolicy::template parameters
           <
                   NT,
@@ -351,6 +351,13 @@ void crhmc_sampling(PointList &randPoints,
   }
 
   PushBackWalkPolicy push_back_policy;
+
+
+  int dim;
+dim = p.dimension();
+        std::cout << "Walk Initial dimension " << dim << std::endl;
+        std::cout << "Walk Initial point " << std::endl;
+        p.print();
 
   walk crhmc_walk = walk(problem, p, input.df, input.f, params);
 

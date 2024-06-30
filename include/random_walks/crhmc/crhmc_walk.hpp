@@ -19,6 +19,8 @@
 #include "ode_solvers/ode_solvers.hpp"
 #include "random_walks/crhmc/additional_units/auto_tuner.hpp"
 #include "random_walks/gaussian_helpers.hpp"
+#include "preprocess/crhmc/crhmc_input.h"
+#include "preprocess/crhmc/crhmc_problem.h"
 #include <chrono>
 struct CRHMCWalk {
   template
@@ -63,6 +65,14 @@ struct CRHMCWalk {
     using Sampler = CRHMCWalk::Walk<Point, Polytope, RandomNumberGenerator,
                                     NegativeGradientFunctor,
                                     NegativeLogprobFunctor, Solver>;
+        
+    using Func = GaussianFunctor::FunctionFunctor<Point>;
+    using Grad = GaussianFunctor::GradientFunctor<Point>;
+    using Hess = GaussianFunctor::HessianFunctor<Point>;
+
+    using Input = crhmc_input<MT, Point, Func, Grad, Hess>;
+    using CrhmcProblem = crhmc_problem<Point, Input>;
+
 
     using Opts = typename Polytope::Opts;
     using IVT = Eigen::Matrix<int, Eigen::Dynamic, 1>;
@@ -127,13 +137,25 @@ struct CRHMCWalk {
     {
 
       dim = p.dimension();
+
+      std::cout << "Initial dimension " << dim << std::endl;
+
+      std::cout << "Initial point " << std::endl;
+      p.print();
       simdLen = params.options.simdLen;
       // Starting point is provided from outside
+      std::cout << "Coeff " << p.getCoefficients() << std::endl;
+      std::cout << "Mat " << MT::Ones(1, simdLen) << std::endl;
+      std::cout << "SimdLen " << simdLen << std::endl;
       x = p.getCoefficients() * MT::Ones(1, simdLen); 
       accepted = false;
-    
+
+      std::cout << "Initial point from outside: " << x << std::endl;
+
       // Initialize solver
+
       solver = std::unique_ptr<Solver>(new Solver(0.0, params.eta, {x, x}, F, Problem, params.options));
+      
       v = MT::Zero(dim, simdLen);
       module_update = std::unique_ptr<auto_tuner<Sampler, RandomNumberGenerator>>(new auto_tuner<Sampler, RandomNumberGenerator>(*this));
       update_modules = params.options.DynamicWeight ||
@@ -180,17 +202,21 @@ struct CRHMCWalk {
       int walk_length = 1,
       bool metropolis_filter = true)
     {
+
+      //Try get the problem
+      //CrhmcProblem problem = P;
+
       num_runs++;
       //  Pick a random velocity with momentum
       v = get_direction_with_momentum(dim, rng, x, v, params.momentum, false);
-      ;
       solver->set_state(0, x);
       solver->set_state(1, v);
       // Get proposals
       solver->steps(walk_length, accepted);
       x_tilde = solver->get_state(0);
       v_tilde = solver->get_state(1);
-
+      //std::cout << "X: " << x_tilde << std::endl;
+      //std::cout << "V: " << v_tilde << std::endl;
       if (metropolis_filter) {
 #ifdef TIME_KEEPING
         start = std::chrono::system_clock::now();

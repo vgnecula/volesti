@@ -289,7 +289,6 @@ struct CrhmcRandomPointGenerator
         typedef typename Walk::MT MT;
         for (unsigned int i = 0; i < std::ceil((float)rnum/simdLen); ++i)
         {
-            // Gather one sample
             walk.apply(rng, walk_length);
             if(walk.P.terminate){return;}
             MT x;

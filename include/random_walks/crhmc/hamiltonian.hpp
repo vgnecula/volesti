@@ -51,6 +51,7 @@ public:
   VT fx;
   int n;
   int m;
+  int cnt = 0;
   int num_runs = 0;
   Barrier *barrier;
   std::unique_ptr<WeightedBarrier> weighted_barrier;
@@ -154,10 +155,13 @@ public:
           weighted_barrier->quadratic_form_gradient(x, dKdv) /
           2;
     } else {
+      if(cnt < 10)
       dKdx = barrier->quadratic_form_gradient(x, dKdv) /
              2;
     }
-
+    if(cnt < 10)
+      std::cout << "DU dkdx " << std::endl << dKdx <<std::endl;
+    
     return {dKdv, dKdx};
   }
   // Approximate computation of the partial derivatives of the K term
@@ -165,16 +169,39 @@ public:
   {
     MT x = x_bar[0];
     MT v = x_bar[1];
+    
     move(x_bar);
-    MT dUdv_b = P.Asp * (v - P.Asp.transpose() * nu).cwiseQuotient(hess);
+    MT dUdv_b = MT(P.Asp * (v - P.Asp.transpose() * nu).cwiseQuotient(hess));
+    if(cnt < 10)
+    {
+      std::cout << "------------------------------ "  <<std::endl;
+      std::cout << "DUdb: " << std::endl << dUdv_b <<std::endl;
+      std::cout << "hess: " << std::endl << hess <<std::endl;
+      std::cout << "dif: " << std::endl << (v - P.Asp.transpose() * nu).cwiseQuotient(hess) <<std::endl;
+      std::cout << "Pasp: " << std::endl << P.Asp <<std::endl;
+      
+    }
     dUdv_b.transposeInPlace();
+
+    if(cnt < 10)
+     std::cout << "Nu initial: " << std::endl << nu <<std::endl;
+    
     MT out_solver = MT(nu.cols(), nu.rows());
     solver.solve((Tx *)dUdv_b.data(), (Tx *)out_solver.data());
     nu = nu + out_solver.transpose();
-
+    if(cnt < 10)
+    {
+      std::cout << "Nu after transpose: " << std::endl << nu <<std::endl;
+      std::cout << "out solver " << std::endl << out_solver.transpose() <<std::endl;
+    
+    }
     MT dKdv = (v - P.Asp.transpose() * nu).cwiseQuotient(hess);
+    //if(cnt < 10)
+     // std::cout << "dkdv " << std::endl << dKdv <<std::endl;
     MT dKdx = MT::Zero(n, simdLen);
     if (options.DynamicWeight) {
+      //if(cnt < 10)
+        //std::cout << "++++++++++++" << std::endl;
       dKdx =
           weighted_barrier->quadratic_form_gradient(x, dKdv) /
           2;
@@ -182,6 +209,11 @@ public:
       dKdx = barrier->quadratic_form_gradient(x, dKdv) /
              2;
     }
+    //dKdv = dKdv.unaryExpr([](double v) { return std::isnan(v) ? 0.0 : v; });
+    //dKdx = dKdx.unaryExpr([](double v) { return std::isnan(v) ? 0.0 : v; });
+    if(cnt < 10)
+      std::cout << "DK dkdv " << std::endl << dKdv <<std::endl;
+    
     return {dKdv, dKdx};
   }
   // Compute the partial derivatives of one term
@@ -219,7 +251,10 @@ public:
     //std::cout << "########################" << std::endl ;
     //std::cout << "Dimension: " << n << std::endl ;
     //std::cout << "########################" << std::endl ;
+    //return {MT::Zero(x.rows(), simdLen), -last_dUdx};
     return {MT::Zero(n, simdLen), -last_dUdx};
+  
+
   }
   // Compute the computations involving only x iff x has been changed
   // Else they are stored
@@ -230,13 +265,35 @@ public:
     }
     xs = y;
     x = xs[0];
+    if(++cnt <6)
+    {
+      std::cout << "Initial hess " << std::endl << hess <<std::endl;
+      std::cout << "Initial xs " << std::endl << xs[0] <<std::endl;
+      //std::cout << "Initial hess " << std::endl << xs[0].cols() <<std::endl;
+    
+    }
     MT h;
     std::tie(fx, dfx, h) = P.f_oracle(x);
+
+    if(cnt <4)
+      std::cout << "H " << std::endl << h <<std::endl;
+    if(cnt <4)
+      std::cout << "x " << std::endl << x <<std::endl;
+
     if (options.DynamicWeight) {
       hess = weighted_barrier->hessian(x) + h;
+      if(cnt <4)
+      std::cout << "WEIGH BAR " << std::endl << weighted_barrier->hessian(x) <<std::endl;
+
     } else {
       hess = barrier->hessian(x) + h;
+      if(cnt <4)
+      std::cout << "bAR " << std::endl << barrier->hessian(x) <<std::endl;
+
     }
+
+    if(cnt < 4)
+      std::cout << "Final hess " << std::endl << hess <<std::endl;
     forceUpdate = false;
     prepared = false;
   }
@@ -244,7 +301,10 @@ public:
   void project(pts &xs) {
     move(xs);
     MT x = xs[0];
-    int m = P.Asp.rows();
+    if(++cnt < 4 ){
+      std::cout << "++++++++++++++++ "<< "\n";
+      std::cout << "Projected X " << x << "\n";
+    }int m = P.Asp.rows();
     MT out_vector = MT(simdLen, m);
     MT in_vector = (-P.Asp * x).colwise() + P.b;
     in_vector.transposeInPlace();
@@ -252,6 +312,17 @@ public:
     out_vector.transposeInPlace();
     out_vector = P.Asp.transpose() * out_vector;
     xs[0] = xs[0] + (out_vector).cwiseQuotient(hess);
+    if(cnt < 4 )
+    {
+      std::cout << "out_vector " <<std::endl << (out_vector) << std::endl; 
+      std::cout << "hess " <<std::endl << (hess) << std::endl;       
+      std::cout << "out_vector+ cwise " <<std::endl << (out_vector).cwiseQuotient(hess) << std::endl; 
+    }
+    if(cnt < 4 )
+    {
+      std::cout << "xs " << xs[0] << std::endl; 
+      std::cout << "!!!!!!!!!!!!!!!!!!!!" << std::endl;
+    }
   }
   // Get the inner product of x and ds weighted by the hessian
   VT x_norm(pts const &xs, pts const &dx)

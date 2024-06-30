@@ -37,6 +37,7 @@ public:
   VT ub;
   int vdim;
   int n;
+  int cnt = 0;
   std::vector<int> upperIdx;
   std::vector<int> lowerIdx;
   std::vector<int> freeIdx;

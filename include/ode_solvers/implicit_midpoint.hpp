@@ -69,6 +69,7 @@ struct ImplicitMidpointODESolver {
   // Contains the sub-states
   pts xs;
   pts xs_prev;
+  int cnt = 0;
 
   // Function oracle
   func F;
@@ -107,19 +108,27 @@ struct ImplicitMidpointODESolver {
 #ifdef TIME_KEEPING
     start = std::chrono::system_clock::now();
 #endif
-    
+    if(cnt < 4)
+      std :: cout << std::endl << "---------------------------------------  "   <<std::endl;
     partialDerivatives = ham.DU(xs);
+    if(++cnt < 4)
+    {
+      std :: cout << "Partial before for  " << std::endl << partialDerivatives[0] <<std::endl;
+    }
+    //ham.project(partialDerivatives);
+    if(cnt < 4)
+      std :: cout << "Partial deriv before for aftger projection : " << std::endl << partialDerivatives[0] <<std::endl;
+
 
 #ifdef TIME_KEEPING
     end = std::chrono::system_clock::now();
     DU_duration += end - start;
 #endif
     
-    //std :: cout << "XS rows " << xs[0].rows() <<std::endl;
-    //std :: cout << "Partial " << partialDerivatives[0].rows() <<std::endl;
-  
     xs = xs + partialDerivatives * (eta / 2);
+
     xs_prev = xs;
+    //std :: cout << "Xs_prev: " << xs_prev[0] <<std::endl;
     done = false;
 
     //std::cout << "######" << std::endl;
@@ -129,7 +138,10 @@ struct ImplicitMidpointODESolver {
       //std::cout << '\n';
     //}
 
-/*
+//-----------------------------------------------------------------------
+    if(cnt < 4)
+      std :: cout << "Enter for : " <<std::endl;
+
     nu = MT::Zero(P.equations(), simdLen);
     for (int i = 0; i < options.maxODEStep; i++) {
       pts xs_old = xs;
@@ -137,13 +149,31 @@ struct ImplicitMidpointODESolver {
 #ifdef TIME_KEEPING
       start = std::chrono::system_clock::now();
 #endif
+      //this returns a 3 dim partial deriv
+      if(cnt < 4)
+    {
+      std::cout << " In for ------------" << std::endl;
+      std::cout << " xmid " << std::endl<< xmid[0] << std::endl;
+      std::cout << " xs_prev "<< std::endl << xs_prev[0] << std::endl;
+      std::cout << " xs " << std::endl<< xs[0] << std::endl;
+    }
       partialDerivatives = ham.approxDK(xmid, nu);
+
+
 
 #ifdef TIME_KEEPING
       end = std::chrono::system_clock::now();
       approxDK_duration += end - start;
 #endif
       xs = xs_prev + partialDerivatives * (eta);
+
+    
+      if(cnt < 4)
+    {
+      std::cout << " partD " << std::endl << partialDerivatives[0] << std::endl;
+      std::cout << " xs  AFTER ADDITION" << std::endl<< xs[0] << std::endl;
+    }
+
 
       VT dist = ham.x_norm(xmid, xs - xs_old) / eta;
       NT maxdist = dist.maxCoeff();
@@ -153,27 +183,45 @@ struct ImplicitMidpointODESolver {
         num_steps = i;
         break;
       //If the estimate is very bad, sample another velocity
-    } else if (maxdist > options.convergence_bound) {
-        //xs = xs * std::nan("1");
-        
-        done = true;
-        num_steps = i;
-        break;
-      }
+      } else if (maxdist > options.convergence_bound) {
+          //xs = xs * std::nan("1");
+          
+          done = true;
+          num_steps = i;
+          break;
+        }
 
     }
 #ifdef TIME_KEEPING
     start = std::chrono::system_clock::now();
 #endif
+
+
+    if(cnt < 4)
+    {
+      std::cout << " After the for ------------" << std::endl;
+      std::cout << "Xs after for: " << std::endl << xs[0] << std::endl;
+      std::cout << "Next, we get the partial derivs " << std::endl;
+      
+    }
+
     partialDerivatives = ham.DU(xs);
+
+
+    if(cnt < 4)
+    {
+      std::cout << "Parttial derivatives after for: " << std::endl << partialDerivatives[0] << std::endl;
+      std::cout << "Next, we get the projection " << std::endl;
+      
+    }
+
+    //ham.project(partialDerivatives);
 #ifdef TIME_KEEPING
     end = std::chrono::system_clock::now();
     DU_duration += end - start;
 #endif
-
     xs = xs + partialDerivatives * (eta / 2);
     ham.project(xs);
-*/
   }
 
   void steps(int num_steps, bool accepted) {

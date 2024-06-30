@@ -51,7 +51,7 @@ using func_params = GaussianFunctor::parameters<NT, Point>;
 using RNG = BoostRandomNumberGenerator<boost::mt19937, NT>;
 
 //Param building -> see sampling_functions.cpp
-static constexpr int simdLen = 1;
+static constexpr int simdLen = 4;
 using Input = crhmc_input<MT, Point, Func, Grad, Hess>;
 using CrhmcProblem = crhmc_problem<Point, Input>;
 
@@ -189,7 +189,7 @@ NT get_next_gaussian(Polytope& P,
     RandomPointGenerator::apply(problem, p, N, walk_length, randPoints,
                                 push_back_policy, rng, g, f, parameters, crhmc_walk, simdLen, raw_output);
 
-    
+    std::cout << "-------------- " << std::endl;
     while (!done)
     {
         NT new_a = last_a * std::pow(ratio,k);
@@ -261,8 +261,6 @@ void compute_annealing_schedule(Polytope& P,
     std::cout<<"Computing the sequence of gaussians..\n"<<std::endl;
 #endif
 
-    Point p(n);
-
     while (true)
     {
 
@@ -284,6 +282,7 @@ void compute_annealing_schedule(Polytope& P,
         typedef crhmc_problem<Point, Input> CrhmcProblem;
         CrhmcProblem problem = CrhmcProblem(input);
 
+        Point p = Point(problem.center);
 
         if(problem.terminate){return;}
 
@@ -294,18 +293,24 @@ void compute_annealing_schedule(Polytope& P,
             params.eta = input.df.params.eta;
         }
 
+        int dim;
+        dim = p.dimension();
+        std::cout << "Walk Initial dimension " << dim << std::endl;
+        std::cout << "Walk Initial point " << std::endl;
+        p.print();                                           
+        std::cout << "-------------- " << std::endl;
         //create the walk object for this problem
         WalkType walk = WalkType(problem, p, input.df, input.f, params);
-
+        std::cout << "-------------- " << std::endl;
         //TODO: test update delta here?
         update_delta<WalkType>
                 ::apply(walk, 4.0 * chebychev_radius
                         / std::sqrt(std::max(NT(1.0), a_vals[it]) * NT(n)));
 
-
         // Compute the next gaussian
         NT next_a = get_next_gaussian<WalkType, walk_params, RandomPointGenerator>
                       (P, p, a_vals[it], N, ratio, C, walk_length, rng, g, f, params, problem, walk);
+        std::cout << "-------------- " << std::endl;
 #ifdef VOLESTI_DEBUG
     std::cout<<"Next Gaussian " << next_a <<std::endl;
 #endif
@@ -456,7 +461,6 @@ double volume_cooling_gaussians(Polytope& Pin,
     VT lamdas;
     lamdas.setZero(m);
     NT vol = std::pow(M_PI/a_vals[0], (NT(n))/2.0);
-    Point p(n); // The origin is the Chebychev center of the Polytope
     unsigned int i=0;
 
     typedef typename std::vector<NT>::iterator viterator;
@@ -469,7 +473,7 @@ double volume_cooling_gaussians(Polytope& Pin,
     std::cout<<"volume of the first gaussian = "<<vol<<"\n"<<std::endl;
     std::cout<<"computing ratios..\n"<<std::endl;
 #endif
-
+    std::cout << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" <<std::endl;
     //iterate over the number of ratios
     for (viterator fnIt = fn.begin();
          fnIt != fn.end();
@@ -500,6 +504,8 @@ double volume_cooling_gaussians(Polytope& Pin,
 
         typedef crhmc_problem<Point, Input> CrhmcProblem;
         CrhmcProblem problem = CrhmcProblem(input);
+
+        Point p = Point(problem.center);
 
         if(problem.terminate){return 0;}
 

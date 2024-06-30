@@ -40,8 +40,17 @@ int main() {
     const NT epsilon = 0.1;
 
     // 3-dimensional cube
-    HPOLYTOPE cube = generate_cube<HPOLYTOPE>(3, false);
-    calculateAndVerifyVolume(cube, "3-dimensional cube", 8.0, epsilon);
+    //HPOLYTOPE cube = generate_cube<HPOLYTOPE>(3, false);
+    //calculateAndVerifyVolume(cube, "3-dimensional cube", 8.0, epsilon);
+
+
+    using PolytopeType = HPolytope<Point>;
+    RNG rng(1);
+    PolytopeType HP=generate_simplex<PolytopeType>(2,false);
+    int dimension = HP.dimension();
+    HP.print();
+    calculateAndVerifyVolume(HP, "sth", 8.0, epsilon);
+
 /*
     // 3-dimensional cross polytope
     HPOLYTOPE crossPolytope = generate_cross<HPOLYTOPE>(3, false);
