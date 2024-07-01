@@ -19,50 +19,22 @@ typedef typename Kernel::Point Point;
 typedef BoostRandomNumberGenerator<boost::mt19937, NT, 3> RNGType;
 typedef HPolytope<Point> HPOLYTOPE;
 
-void calculateAndVerifyVolume(HPOLYTOPE& polytope, const std::string& description, NT expectedVolume, NT epsilon) {
+template <int simdLen>
+void calculateAndVerifyVolume(HPOLYTOPE& polytope) {
     int walk_len = 100;
     NT e = 0.1;
 
-    std::cout << "Calculating volume for " << description << ":\n";
-    NT volume = volume_cooling_gaussians<CRHMCWalk, RNGType>(polytope, e, walk_len);
+    NT volume = volume_cooling_gaussians<CRHMCWalk, RNGType, HPOLYTOPE, 4>(polytope, e, walk_len);
 
-    std::cout << "Estimated volume: " << volume << "\n";
-    std::cout << "Expected volume: " << expectedVolume << "\n";
-    NT error = std::abs(volume - expectedVolume);
-    if (error <= epsilon) {
-        std::cout << "Result is within the acceptable error margin (" << epsilon << ").\n\n";
-    } else {
-        std::cout << "Error (" << error << ") is larger than acceptable margin (" << epsilon << ").\n\n";
-    }
+    std::cout << "Volume " << volume << std::endl;
 }
 
 int main() {
-    const NT epsilon = 0.1;
-
-    // 3-dimensional cube
-    //HPOLYTOPE cube = generate_cube<HPOLYTOPE>(3, false);
-    //calculateAndVerifyVolume(cube, "3-dimensional cube", 8.0, epsilon);
-
-
-    using PolytopeType = HPolytope<Point>;
-    RNG rng(1);
-    PolytopeType HP=generate_simplex<PolytopeType>(2,false);
-    int dimension = HP.dimension();
+    
+    HPOLYTOPE HP = generate_simplex<HPOLYTOPE>(2,false);
+    std::cout << "HPoly: " << std::endl;
     HP.print();
-    calculateAndVerifyVolume(HP, "sth", 8.0, epsilon);
+    calculateAndVerifyVolume<4>(HP);
 
-/*
-    // 3-dimensional cross polytope
-    HPOLYTOPE crossPolytope = generate_cross<HPOLYTOPE>(3, false);
-    calculateAndVerifyVolume(crossPolytope, "3-dimensional cross polytope", 4.0 / 6.0, epsilon);
-
-    // 3-dimensional simplex
-    HPOLYTOPE simplex = generate_simplex<HPOLYTOPE>(3, false);
-    calculateAndVerifyVolume(simplex, "3-dimensional simplex", 1.0 / 6.0, epsilon);
-
-    // birkhoff polytope dimension 3 
-    HPOLYTOPE birkhoffPolytope = generate_birkhoff<HPOLYTOPE>(3);
-    calculateAndVerifyVolume(birkhoffPolytope, "Birkhoff polytope (dim 3)", -1, epsilon);  // Theoretical volume not easily available
-*/
     return 0;
 }

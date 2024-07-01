@@ -51,7 +51,6 @@ using func_params = GaussianFunctor::parameters<NT, Point>;
 using RNG = BoostRandomNumberGenerator<boost::mt19937, NT>;
 
 //Param building -> see sampling_functions.cpp
-static constexpr int simdLen = 4;
 using Input = crhmc_input<MT, Point, Func, Grad, Hess>;
 using CrhmcProblem = crhmc_problem<Point, Input>;
 
@@ -152,6 +151,7 @@ template
     typename WalkType,
     typename walk_params,
     typename RandomPointGenerator,
+    int simdLen,
     typename Polytope,
     typename Point,
     typename NT,
@@ -189,7 +189,6 @@ NT get_next_gaussian(Polytope& P,
     RandomPointGenerator::apply(problem, p, N, walk_length, randPoints,
                                 push_back_policy, rng, g, f, parameters, crhmc_walk, simdLen, raw_output);
 
-    std::cout << "-------------- " << std::endl;
     while (!done)
     {
         NT new_a = last_a * std::pow(ratio,k);
@@ -223,6 +222,7 @@ template
     typename WalkType,
     typename walk_params,
     typename RandomPointGenerator,
+    int simdLen,
     typename Polytope,
     typename NT,
     typename RandomNumberGenerator
@@ -286,7 +286,7 @@ void compute_annealing_schedule(Polytope& P,
 
         if(problem.terminate){return;}
 
-        problem.options.simdLen=simdLen;
+        problem.options.simdLen = simdLen;
         walk_params params(input.df, p.dimension(), problem.options);
 
         if (input.df.params.eta > 0) {
@@ -295,20 +295,17 @@ void compute_annealing_schedule(Polytope& P,
 
         int dim;
         dim = p.dimension();
-        std::cout << "Walk Initial dimension " << dim << std::endl;
-        std::cout << "Walk Initial point " << std::endl;
-        p.print();                                           
-        std::cout << "-------------- " << std::endl;
+
         //create the walk object for this problem
         WalkType walk = WalkType(problem, p, input.df, input.f, params);
-        std::cout << "-------------- " << std::endl;
+
         //TODO: test update delta here?
         update_delta<WalkType>
                 ::apply(walk, 4.0 * chebychev_radius
                         / std::sqrt(std::max(NT(1.0), a_vals[it]) * NT(n)));
 
         // Compute the next gaussian
-        NT next_a = get_next_gaussian<WalkType, walk_params, RandomPointGenerator>
+        NT next_a = get_next_gaussian<WalkType, walk_params, RandomPointGenerator, simdLen>
                       (P, p, a_vals[it], N, ratio, C, walk_length, rng, g, f, params, problem, walk);
         std::cout << "-------------- " << std::endl;
 #ifdef VOLESTI_DEBUG
@@ -375,8 +372,8 @@ template
 <
     typename WalkTypePolicy,
     typename Polytope,
-    typename RandomNumberGenerator
-
+    typename RandomNumberGenerator,
+    int simdLen
 >
 double volume_cooling_gaussians(Polytope& Pin,
                                 RandomNumberGenerator& rng,
@@ -439,7 +436,8 @@ double volume_cooling_gaussians(Polytope& Pin,
     <
         WalkType,
         walk_params,
-        RandomPointGenerator
+        RandomPointGenerator,
+        simdLen
     >(P, ratio, C, parameters.frac, N, walk_length, radius, error, a_vals, rng);
 
 #ifdef VOLESTI_DEBUG
@@ -473,7 +471,7 @@ double volume_cooling_gaussians(Polytope& Pin,
     std::cout<<"volume of the first gaussian = "<<vol<<"\n"<<std::endl;
     std::cout<<"computing ratios..\n"<<std::endl;
 #endif
-    std::cout << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" <<std::endl;
+
     //iterate over the number of ratios
     for (viterator fnIt = fn.begin();
          fnIt != fn.end();
@@ -586,14 +584,15 @@ template
 <
     typename WalkTypePolicy = GaussianCDHRWalk,
     typename RandomNumberGenerator = BoostRandomNumberGenerator<boost::mt11213b, double>,
-    typename Polytope
+    typename Polytope,
+    int simdLen
 >
 double volume_cooling_gaussians(Polytope &Pin,
                                  double const& error = 0.1,
                                  unsigned int const& walk_length = 1)
 {
     RandomNumberGenerator rng(Pin.dimension());
-    return volume_cooling_gaussians<WalkTypePolicy>(Pin, rng, error, walk_length);
+    return volume_cooling_gaussians<WalkTypePolicy, Polytope, RandomNumberGenerator, simdLen>(Pin, rng, error, walk_length);
 }
 
 
@@ -601,7 +600,8 @@ template
 <
     typename WalkTypePolicy = GaussianCDHRWalk,
     typename RandomNumberGenerator = BoostRandomNumberGenerator<boost::mt11213b, double>,
-    typename Polytope
+    typename Polytope,
+    int simdLen
 >
 double volume_cooling_gaussians(Polytope &Pin,
                                 Cartesian<double>::Point const& interior_point,
@@ -611,7 +611,7 @@ double volume_cooling_gaussians(Polytope &Pin,
     RandomNumberGenerator rng(Pin.dimension());
     Pin.set_interior_point(interior_point);
 
-    return volume_cooling_gaussians<WalkTypePolicy>(Pin, rng, error, walk_length);
+    return volume_cooling_gaussians<WalkTypePolicy, Polytope, RandomNumberGenerator, simdLen>(Pin, rng, error, walk_length);
 }
 
 #endif // VOLUME_COOLING_GAUSSIANS_HPP
