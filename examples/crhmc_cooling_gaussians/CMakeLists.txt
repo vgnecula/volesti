@@ -121,10 +121,6 @@ else ()
   add_definitions(${CXX_COVERAGE_COMPILE_FLAGS} "-ldl")
   add_definitions(${CXX_COVERAGE_COMPILE_FLAGS} "-DBOOST_NO_AUTO_PTR")
 
-  add_executable (sampling_functions sampling_functions.cpp)
-	TARGET_LINK_LIBRARIES(sampling_functions QD_LIB ${MKL_LINK} ${LP_SOLVE})
-	add_executable (simple_crhmc simple_crhmc.cpp)
-	TARGET_LINK_LIBRARIES(simple_crhmc QD_LIB ${MKL_LINK} ${LP_SOLVE})
   add_executable(volume_example volume_example.cpp)
   target_link_libraries(volume_example QD_LIB ${MKL_LINK} ${LP_SOLVE})
 
