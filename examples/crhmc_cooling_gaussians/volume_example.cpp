@@ -16,25 +16,41 @@
 typedef double NT;
 typedef Cartesian<NT> Kernel;
 typedef typename Kernel::Point Point;
-typedef BoostRandomNumberGenerator<boost::mt19937, NT, 3> RNGType;
+typedef BoostRandomNumberGenerator<boost::mt11213b, double> RandomNumberGenerator;
 typedef HPolytope<Point> HPOLYTOPE;
 
-template <int simdLen>
 void calculateAndVerifyVolume(HPOLYTOPE& polytope) {
     int walk_len = 100;
     NT e = 0.1;
 
-    NT volume = volume_cooling_gaussians<CRHMCWalk, RNGType, HPOLYTOPE, 4>(polytope, e, walk_len);
+    RandomNumberGenerator rng(polytope.dimension());
+
+    NT volume = volume_cooling_gaussians<HPOLYTOPE, RandomNumberGenerator>(polytope, rng, e, walk_len);
 
     std::cout << "Volume " << volume << std::endl;
 }
 
 int main() {
     
-    HPOLYTOPE HP = generate_simplex<HPOLYTOPE>(2,false);
-    std::cout << "HPoly: " << std::endl;
-    HP.print();
-    calculateAndVerifyVolume<4>(HP);
+    HPOLYTOPE simplex = generate_simplex<HPOLYTOPE>(2, false);
+    std::cout << std::endl << "Simplex: " << std::endl;
+    simplex.print();
+    calculateAndVerifyVolume(simplex);
+    
+    HPOLYTOPE cube = generate_cube<HPOLYTOPE>(3, false);
+    std::cout << std::endl << "Cube: " << std::endl;
+    cube.print();
+    calculateAndVerifyVolume(cube);
 
+    HPOLYTOPE cross = generate_cross<HPOLYTOPE>(3, false);
+    std::cout << std::endl << "Cross: " << std::endl;
+    cross.print();
+    calculateAndVerifyVolume(cross);
+ 
+    HPOLYTOPE birkhoff = generate_birkhoff<HPOLYTOPE>(3);
+    std::cout << std::endl << "Birkhoff: " << std::endl;
+    birkhoff.print();
+    calculateAndVerifyVolume(birkhoff);
+    
     return 0;
 }
