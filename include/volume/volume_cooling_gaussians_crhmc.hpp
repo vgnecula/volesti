@@ -1,5 +1,5 @@
-#ifndef VOLUME_COOLING_GAUSSIANS_HPP
-#define VOLUME_COOLING_GAUSSIANS_HPP
+#ifndef VOLUME_COOLING_GAUSSIANS_CRHMC_HPP
+#define VOLUME_COOLING_GAUSSIANS_CRHMC_HPP
 
 //#define VOLESTI_DEBUG
 
@@ -15,6 +15,7 @@
 #include "random_walks/gaussian_cdhr_walk.hpp"
 #include "sampling/random_point_generators.hpp"
 #include "volume/math_helpers.hpp"
+#include "volume/volume_cooling_gaussians.hpp"
 #include "random_walks/random_walks.hpp"
 
 //new include for crhmc
@@ -31,29 +32,6 @@
 #include "random_walks/random_walks.hpp"
 #include "generators/known_polytope_generators.h"
 
-
-// define types
-using NT = double;
-using Kernel = Cartesian<NT>;
-using Point = typename Kernel::Point;
-using Func = GaussianFunctor::FunctionFunctor<Point>;
-using Grad = GaussianFunctor::GradientFunctor<Point>;
-using Hess = GaussianFunctor::HessianFunctor<Point>;
-
-using NegativeLogprobFunctor = GaussianFunctor::FunctionFunctor<Point>; //Func
-using NegativeGradientFunctor = GaussianFunctor::GradientFunctor<Point>; //Grad
-using HessianFunctor = GaussianFunctor::HessianFunctor<Point>; //Hess
-
-using PolytopeType = HPolytope<Point>;
-using MT = PolytopeType::MT;
-using VT = Eigen::Matrix<NT, Eigen::Dynamic, 1>;
-using func_params = GaussianFunctor::parameters<NT, Point>;
-using RNG = BoostRandomNumberGenerator<boost::mt19937, NT>;
-
-//Param building -> see sampling_functions.cpp
-using Input = crhmc_input<MT, Point, Func, Grad, Hess>;
-using CrhmcProblem = crhmc_problem<Point, Input>;
-
 ////////////////////////////// Algorithms
 
 // Gaussian Anealling
@@ -62,67 +40,6 @@ using CrhmcProblem = crhmc_problem<Point, Input>;
 // Springer-Verlag Berlin Heidelberg and The Mathematical Programming Society 2015
 // Ben Cousins, Santosh Vempala
 
-// Compute the first variance a_0 for the starting gaussian
-template <typename Polytope, typename NT>
-void get_first_gaussian(Polytope& P,
-                        NT const& frac,
-                        NT const& chebychev_radius,
-                        NT const& error,
-                        std::vector<NT> & a_vals)
-{
-    // if tol is smaller than 1e-6 no convergence can be obtained when float is used
-    NT tol = std::is_same<float, NT>::value ? 0.001 : 0.0000001;
-
-    std::vector <NT> dists = P.get_dists(chebychev_radius);
-    NT lower = 0.0;
-    NT upper = 1.0;
-
-    // Compute an upper bound for a_0
-    unsigned int i;
-    const unsigned int maxiter = 10000;
-    for (i= 1; i <= maxiter; ++i) {
-        NT sum = 0.0;
-        for (auto it = dists.begin(); it != dists.end(); ++it)
-        {
-            sum += std::exp(-upper * std::pow(*it, 2.0))
-                    / (2.0 * (*it) * std::sqrt(M_PI * upper));
-        }
-
-        if (sum > frac * error)
-        {
-            upper = upper * 10;
-        } else {
-            break;
-        }
-    }
-
-    if (i == maxiter) {
-#ifdef VOLESTI_DEBUG
-        std::cout << "Cannot obtain sharp enough starting Gaussian" << std::endl;
-#endif
-        return;
-    }
-
-    //get a_0 with binary search
-    while (upper - lower > tol)
-    {
-        NT mid = (upper + lower) / 2.0;
-        NT sum = 0.0;
-        for (auto it = dists.begin(); it != dists.end(); ++it) {
-            sum += std::exp(-mid * std::pow(*it, 2.0))
-                    / (2.0 * (*it) * std::sqrt(M_PI * mid));
-        }
-
-        if (sum < frac * error) {
-            upper = mid;
-        } else {
-            lower = mid;
-        }
-    }
-    a_vals.push_back((upper + lower) / NT(2.0));
-}
-
-
 // Compute a_{i+1} when a_i is given
 template
 <
@@ -130,6 +47,9 @@ template
     typename walk_params,
     typename RandomPointGenerator,
     int simdLen,
+    typename Grad,
+    typename Func,
+    typename CrhmcProblem,
     typename Polytope,
     typename Point,
     typename NT,
@@ -201,6 +121,11 @@ template
     typename walk_params,
     typename RandomPointGenerator,
     int simdLen,
+    typename Grad,
+    typename Func,
+    typename Hess,
+    typename func_params,
+    typename Input,
     typename Polytope,
     typename NT,
     typename RandomNumberGenerator
@@ -222,6 +147,7 @@ void compute_annealing_schedule(Polytope& P,
     typedef typename Polytope::VT VT;
 
     // Compute the first gaussian
+    // This uses the function from the standard volume_cooling_gaussians.hpp
     get_first_gaussian(P, frac, chebychev_radius, error, a_vals);
     NT a_stop = 0.0;
     const NT tol = 0.001;
@@ -255,7 +181,7 @@ void compute_annealing_schedule(Polytope& P,
         Grad g(f_params);
         Hess h(f_params);
 
-        Input input = convert2crhmc_input<Input, Polytope, NegativeLogprobFunctor, NegativeGradientFunctor, HessianFunctor>(P, f, g, h);
+        Input input = convert2crhmc_input<Input, Polytope, Func, Grad, Hess>(P, f, g, h);
 
         typedef crhmc_problem<Point, Input> CrhmcProblem;
         CrhmcProblem problem = CrhmcProblem(input);
@@ -278,7 +204,7 @@ void compute_annealing_schedule(Polytope& P,
         WalkType walk = WalkType(problem, p, input.df, input.f, params);
 
         // Compute the next gaussian
-        NT next_a = get_next_gaussian<WalkType, walk_params, RandomPointGenerator, simdLen>
+        NT next_a = get_next_gaussian<WalkType, walk_params, RandomPointGenerator, simdLen, Grad, Func, CrhmcProblem>
                       (P, p, a_vals[it], N, ratio, C, walk_length, rng, g, f, params, problem, walk);
 
 #ifdef VOLESTI_DEBUG
@@ -323,24 +249,6 @@ void compute_annealing_schedule(Polytope& P,
 #endif
 }
 
-template <typename NT>
-struct gaussian_annealing_parameters
-{
-    gaussian_annealing_parameters(unsigned int d)
-        :   frac(0.1)
-        ,   ratio(NT(1)-NT(1)/(NT(d)))
-        ,   C(NT(2))
-        ,   N(500 * ((int) C) + ((int) (d * d / 2)))
-        ,   W(6*d*d+800)
-    {}
-
-    NT frac;
-    NT ratio;
-    NT C;
-    unsigned int N;
-    unsigned int W;
-};
-
 template
 <
     typename Polytope,
@@ -353,23 +261,34 @@ double volume_cooling_gaussians(Polytope& Pin,
                                 double const& error = 0.1,
                                 unsigned int const& walk_length = 1)
 {
-    using Solver =
-        ImplicitMidpointODESolver<Point, NT, CrhmcProblem, Input::Grad, simdLen>;
+    typedef typename Polytope::PointType Point;
+    typedef typename Point::FT 	NT;
+    typedef typename Polytope::VT 	VT;
+    typedef typename Polytope::MT 	MT;
+    typedef typename GaussianFunctor::FunctionFunctor<Point>    Func;
+    typedef typename GaussianFunctor::GradientFunctor<Point>    Grad;
+    typedef typename GaussianFunctor::HessianFunctor<Point>     Hess;
+    typedef typename GaussianFunctor::parameters<NT, Point>     func_params;
+
+    typedef crhmc_input<MT, Point, Func, Grad, Hess> Input;
+    typedef crhmc_problem<Point, Input> CrhmcProblem;   
+
+    typedef ImplicitMidpointODESolver<Point, NT, CrhmcProblem, Grad, simdLen> Solver;
 
     typedef typename WalkTypePolicy::template Walk
             <
                     Point,
                     CrhmcProblem,
                     RandomNumberGenerator,
-                    NegativeGradientFunctor,
-                    NegativeLogprobFunctor,
+                    Grad,
+                    Func,
                     Solver
             > WalkType;
 
     typedef typename WalkTypePolicy::template parameters
           <
                   NT,
-                  NegativeGradientFunctor
+                  Grad
           > walk_params;
 
     typedef CrhmcRandomPointGenerator<WalkType> RandomPointGenerator;
@@ -410,7 +329,12 @@ double volume_cooling_gaussians(Polytope& Pin,
         WalkType,
         walk_params,
         RandomPointGenerator,
-        simdLen
+        simdLen,
+        Grad,
+        Func,
+        Hess,
+        func_params,
+        Input
     >(P, ratio, C, parameters.frac, N, walk_length, radius, error, a_vals, rng);
 
 #ifdef VOLESTI_DEBUG
@@ -471,7 +395,7 @@ double volume_cooling_gaussians(Polytope& Pin,
         Hess h(f_params);
 
         //create the crhmc problem
-        Input input = convert2crhmc_input<Input, Polytope, NegativeLogprobFunctor, NegativeGradientFunctor, HessianFunctor>(P, f, g, h);
+        Input input = convert2crhmc_input<Input, Polytope, Func, Grad, Hess>(P, f, g, h);
 
         typedef crhmc_problem<Point, Input> CrhmcProblem;
         CrhmcProblem problem = CrhmcProblem(input);
@@ -547,4 +471,4 @@ double volume_cooling_gaussians(Polytope& Pin,
     return vol;
 }
 
-#endif // VOLUME_COOLING_GAUSSIANS_HPP
+#endif // VOLUME_COOLING_GAUSSIANS_CRHMC_HPP
