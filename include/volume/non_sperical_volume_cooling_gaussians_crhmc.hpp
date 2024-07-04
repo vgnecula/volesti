@@ -10,9 +10,102 @@
 
 // Gaussian Anealling
 
-// Implementation is based on algorithm from paper "A practical volume algorithm",
-// Springer-Verlag Berlin Heidelberg and The Mathematical Programming Society 2015
-// Ben Cousins, Santosh Vempala
+// Compute the first variance a_0 for the starting gaussian
+template <typename Polytope, typename NT>
+void get_first_gaussian(Polytope& P,
+                        NT const& frac,
+                        NT const& chebychev_radius,
+                        NT const& error,
+                        std::vector<std::vector<NT>>& a_vals)
+{
+    NT tol = std::is_same<float, NT>::value ? 0.001 : 0.0000001;
+
+    std::vector <NT> dists = P.get_dists(chebychev_radius);
+    std::vector<NT> lower(P.dimension(), 0.0);
+    std::vector<NT> upper(P.dimension(), 1.0);
+
+    // Compute an upper bound for a_0
+    unsigned int i;
+    const unsigned int maxiter = 10000;
+    for (i = 1; i <= maxiter; ++i) 
+    {
+        NT sum = 0.0;
+        for (auto it = dists.begin(); it != dists.end(); it++) 
+        {
+            Eigen::Matrix<NT, Eigen::Dynamic, 1> dist_vector(*it);
+            Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
+            
+            for (unsigned int j = 0; j < P.dimension(); j++) 
+                covariance_matrix(j, j) = 1.0 / (2.0 * upper[j]);
+            
+            NT mahalanobis_dist = std::sqrt(dist_vector.transpose() * covariance_matrix.inverse() * dist_vector);
+            sum += std::exp(-0.5 * std::pow(mahalanobis_dist, 2.0))
+                   / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(covariance_matrix.determinant()));
+        }
+        if (sum > frac * error) 
+        {
+            for (unsigned int j = 0; j < P.dimension(); j++) 
+                upper[j] = upper[j] * 10;
+        } 
+        else 
+            break;
+    }
+
+    if (i == maxiter) {
+#ifdef VOLESTI_DEBUG
+        std::cout << "Cannot obtain sharp enough starting Gaussian" << std::endl;
+#endif
+        return;
+    }
+
+    // get a_0 with binary search
+    while (true) {
+        bool converged = true;
+        for (unsigned int j = 0; j < P.dimension(); j++) 
+        {
+            if (upper[j] - lower[j] > tol) {
+                converged = false;
+                break;
+            }
+        }
+        if (converged)
+            break;
+
+        std::vector<NT> mid(P.dimension());
+        for (unsigned int j = 0; j < P.dimension(); j++)
+            mid[j] = (upper[j] + lower[j]) / 2.0;
+
+        NT sum = 0.0;
+        for (auto it = dists.begin(); it != dists.end(); it++) 
+        {
+            Eigen::Matrix<NT, Eigen::Dynamic, 1> dist_vector(*it);
+            Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
+            
+            for (unsigned int j = 0; j < P.dimension(); j++) 
+                covariance_matrix(j, j) = 1.0 / (2.0 * mid[j]);
+
+            NT mahalanobis_dist = std::sqrt(dist_vector.transpose() * covariance_matrix.inverse() * dist_vector);
+            sum += std::exp(-0.5 * std::pow(mahalanobis_dist, 2.0))
+                   / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(covariance_matrix.determinant()));
+        }
+        if (sum < frac * error) 
+        {
+            for (unsigned int j = 0; j < P.dimension(); j++)
+                upper[j] = mid[j];
+        } 
+        else {
+            for (unsigned int j = 0; j < P.dimension(); j++)
+                lower[j] = mid[j];
+        }
+    }
+
+    std::vector<NT> a_vals_0(P.dimension());
+    for (unsigned int j = 0; j < P.dimension(); j++)
+        a_vals_0[j] = (upper[j] + lower[j]) / NT(2.0);
+
+    a_vals.push_back(a_vals_0);
+}
+
 
 // Compute a_{i+1} when a_i is given
 template
@@ -230,7 +323,7 @@ template
     typename WalkTypePolicy = CRHMCWalk,
     int simdLen = 8
 >
-double volume_cooling_gaussians(Polytope& Pin,
+double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
                                 RandomNumberGenerator& rng,
                                 double const& error = 0.1,
                                 unsigned int const& walk_length = 1)
@@ -293,7 +386,8 @@ double volume_cooling_gaussians(Polytope& Pin,
 #endif
 
     // Initialization for the schedule annealing
-    std::vector<NT> a_vals;
+    //FIXME
+    std::vector<std::vector<NT>> a_vals;
     NT ratio = parameters.ratio;
     NT C = parameters.C;
     unsigned int N = parameters.N;
@@ -329,7 +423,10 @@ double volume_cooling_gaussians(Polytope& Pin,
     std::vector<NT> its(mm,0);
     VT lamdas;
     lamdas.setZero(m);
+    
+    //FIXME
     NT vol = std::pow(M_PI/a_vals[0], (NT(n))/2.0);
+    
     unsigned int i=0;
 
     typedef typename std::vector<NT>::iterator viterator;

@@ -1,13 +1,6 @@
-#include "Eigen/Eigen"
-#include <vector>
-#include "cartesian_geom/cartesian_kernel.h"
-#include "convex_bodies/hpolytope.h"
 #include "generators/known_polytope_generators.h"
-
 #include "random_walks/random_walks.hpp"
-#include "volume/volume_sequence_of_balls.hpp"
 #include "volume/volume_cooling_gaussians_crhmc.hpp"
-#include "volume/volume_cooling_balls.hpp"
 
 #include <iostream>
 #include <fstream>
@@ -25,18 +18,18 @@ void calculateAndVerifyVolume(HPOLYTOPE& polytope) {
 
     RandomNumberGenerator rng(polytope.dimension());
 
-    NT volume = volume_cooling_gaussians<HPOLYTOPE, RandomNumberGenerator>(polytope, rng, e, walk_len);
+    NT volume = non_spherical_crhmc_volume_cooling_gaussians<HPOLYTOPE, RandomNumberGenerator>(polytope, rng, e, walk_len);
 
     std::cout << "Volume " << volume << std::endl;
 }
 
 int main() {
-    
+
     HPOLYTOPE simplex = generate_simplex<HPOLYTOPE>(2, false);
     std::cout << std::endl << "Simplex: " << std::endl;
     simplex.print();
     calculateAndVerifyVolume(simplex);
-    
+
     HPOLYTOPE cube = generate_cube<HPOLYTOPE>(3, false);
     std::cout << std::endl << "Cube: " << std::endl;
     cube.print();
@@ -46,11 +39,11 @@ int main() {
     std::cout << std::endl << "Cross: " << std::endl;
     cross.print();
     calculateAndVerifyVolume(cross);
- 
+
     HPOLYTOPE birkhoff = generate_birkhoff<HPOLYTOPE>(3);
     std::cout << std::endl << "Birkhoff: " << std::endl;
     birkhoff.print();
     calculateAndVerifyVolume(birkhoff);
-    
+
     return 0;
 }
