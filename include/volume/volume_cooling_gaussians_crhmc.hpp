@@ -3,34 +3,8 @@
 
 //#define VOLESTI_DEBUG
 
-#include <iterator>
-#include <vector>
-#include <list>
-#include <math.h>
-#include <chrono>
-
-#include "cartesian_geom/cartesian_kernel.h"
-#include "random_walks/gaussian_helpers.hpp"
-#include "random_walks/gaussian_ball_walk.hpp"
-#include "random_walks/gaussian_cdhr_walk.hpp"
-#include "sampling/random_point_generators.hpp"
-#include "volume/math_helpers.hpp"
 #include "volume/volume_cooling_gaussians.hpp"
-#include "random_walks/random_walks.hpp"
-
-//new include for crhmc
-#include "Eigen/Eigen"
-#include "cartesian_geom/cartesian_kernel.h"
-#include "volume/sampling_policies.hpp"
-#include "ode_solvers/ode_solvers.hpp"
-#include "preprocess/crhmc/crhmc_input.h"
 #include "preprocess/crhmc/crhmc_problem.h"
-#include "sampling/random_point_generators.hpp"
-#include "sampling/sampling.hpp"
-#include "random.hpp"
-#include <vector>
-#include "random_walks/random_walks.hpp"
-#include "generators/known_polytope_generators.h"
 
 ////////////////////////////// Algorithms
 
