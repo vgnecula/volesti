@@ -10,6 +10,14 @@ NT eval_exp(Point const& p, NT const& a)
     return std::exp(-a * p.squared_length());
 }
 
+template <typename Point, typename NT>
+NT eval_exp_non(const Point& p, const NT& a) {
+    NT result = 0.0;
+    for (unsigned int j = 0; j < p.dimension(); ++j) {
+        result += a * p[j] * p[j];
+    }
+    return std::exp(-result);
+}
 
 template <typename Point, typename NT>
 NT get_max(Point const& l, Point const& u, NT const& a_i)

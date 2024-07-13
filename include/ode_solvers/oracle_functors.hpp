@@ -309,89 +309,73 @@ struct ExponentialFunctor {
 
 
 struct GaussianFunctor {
+    template <typename NT, typename Point>
+    struct parameters {
+        Point x0;
+        std::vector<NT> a;
+        NT eta;
+        unsigned int order;
+        NT L; // Lipschitz constant for gradient
+        NT m; // Strong convexity constant
+        NT kappa; // Condition number
+        parameters(Point x0_, std::vector<NT> a_, NT eta_)
+            : x0(x0_), a(a_), eta(eta_), order(2), L(*std::max_element(a_.begin(), a_.end())), m(*std::min_element(a_.begin(), a_.end())), kappa(1) {};
+    };
 
-  template <
-      typename NT,
-      typename Point
-  >
-  struct parameters {
-    Point x0;
-    NT a;
-    NT eta;
-    unsigned int order;
-    NT L; // Lipschitz constant for gradient
-    NT m; // Strong convexity constant
-    NT kappa; // Condition number
+    template <typename Point>
+    struct GradientFunctor {
+        typedef typename Point::FT NT;
+        typedef std::vector<Point> pts;
+        parameters<NT, Point>& params;
+        GradientFunctor(parameters<NT, Point>& params_) : params(params_) {};
+        Point operator()(unsigned int const& i, pts const& xs, NT const& t) const {
+            if (i == params.order - 1) {
+                Point y = xs[0] - params.x0;
+                for (unsigned int j = 0; j < y.dimension(); ++j) {
+                    y[j] *= -2.0 * params.a[j];
+                }
+                return y;
+            } else {
+                return xs[i + 1];
+            }
+        }
+        Point operator()(Point const& x) {
+            Point y = x - params.x0;
+            for (unsigned int j = 0; j < y.dimension(); ++j) {
+                y.set_coord(j, y[j] * -2.0 * params.a[j]);
+            }
+            return y;
+        }
+    };
 
-    parameters(Point x0_, NT a_, NT eta_) :
-        x0(x0_), a(a_), eta(eta_), order(2), L(2 * a_), m(2 * a_), kappa(1) {};
+    template <typename Point>
+    struct FunctionFunctor {
+        typedef typename Point::FT NT;
+        parameters<NT, Point>& params;
+        FunctionFunctor(parameters<NT, Point>& params_) : params(params_) {};
+        NT operator()(Point const& x) const {
+            Point y = x - params.x0;
+            NT result = 0.0;
+            for (unsigned int j = 0; j < y.dimension(); ++j) {
+                result += params.a[j] * y[j] * y[j];
+            }
+            return result;
+        }
+    };
 
-  };
-
-  template
-  <
-      typename Point
-  >
-  struct GradientFunctor {
-    typedef typename Point::FT NT;
-    typedef std::vector<Point> pts;
-
-    parameters<NT, Point> &params;
-
-    GradientFunctor(parameters<NT, Point> &params_) : params(params_) {};
-
-    // The index i represents the state vector index
-    Point operator() (unsigned int const& i, pts const& xs, NT const& t) const {
-      if (i == params.order - 1) {
-        Point y = (-2.0 * params.a) * (xs[0] - params.x0);
-        return y;
-      } else {
-        return xs[i + 1]; // returns derivative
-      }
-    }
-    Point operator()(Point const&x){
-      Point y = (-2.0 * params.a) * (x - params.x0);
-      return y;
-    }
-  };
-
-  template
-  <
-    typename Point
-  >
-  struct FunctionFunctor {
-    typedef typename Point::FT NT;
-
-    parameters<NT, Point> &params;
-
-    FunctionFunctor(parameters<NT, Point> &params_) : params(params_) {};
-
-    // The index i represents the state vector index
-    NT operator() (Point const& x) const {
-      Point y = x - params.x0;
-      return params.a * y.dot(y);
-    }
-
-  };
-
-  template
-<
-  typename Point
->
-struct HessianFunctor {
-  typedef typename Point::FT NT;
-
-  parameters<NT, Point> &params;
-
-  HessianFunctor(parameters<NT, Point> &params_) : params(params_) {};
-
-  // The index i represents the state vector index
-  Point operator() (Point const& x) const {
-    return (2.0 * params.a) * Point::all_ones(x.dimension());
-  }
-
-};
-
+    template <typename Point>
+    struct HessianFunctor {
+        typedef typename Point::FT NT;
+        parameters<NT, Point>& params;
+        HessianFunctor(parameters<NT, Point>& params_) : params(params_) {};
+        Point operator()(Point const& x) const {
+            Point result(x.dimension());
+            for (unsigned int j = 0; j < x.dimension(); ++j) {
+                result.set_coord(j, 2.0 * params.a[j]);
+            }
+            return result;
+        }
+    };
 };
 
 #endif
