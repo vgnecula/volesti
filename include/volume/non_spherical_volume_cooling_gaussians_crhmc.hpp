@@ -574,6 +574,10 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
 
             NT val = (*fnIt) / (*itsIt);
 
+#ifdef VOLESTI_DEBUG
+        std::cout << "density curr: "<< density_curr << std::endl;
+#endif
+
             last_W[index] = val;
             if (val <= min_val)
             {
