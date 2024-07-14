@@ -150,30 +150,41 @@ std::vector<NT> get_next_gaussian(
     bool raw_output = false;
     RandomPointGenerator::apply(problem, p, N, walk_length, randPoints, push_back_policy, rng, g, f, parameters, crhmc_walk, simdLen, raw_output);
 
+
     while (!done) {
         std::vector<NT> new_a(last_a.size());
         for (unsigned int j = 0; j < last_a.size(); j++) {
             new_a[j] = last_a[j] * std::pow(ratio, k);
         }
 
+        // Precalculate the covariance matrices
+        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix_next = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
+        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix_curr = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
+        for (unsigned int j = 0; j < P.dimension(); j++) {
+            covariance_matrix_next(j, j) = 1.0 / (2.0 * new_a[j]);
+            covariance_matrix_curr(j, j) = 1.0 / (2.0 * last_a[j]);
+        }
+
+        // Precalculate the inverse of the covariance matrices
+        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> inv_covariance_matrix_next = covariance_matrix_next.inverse();
+        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> inv_covariance_matrix_curr = covariance_matrix_curr.inverse();
+
         auto fnit = fn.begin();
         for (auto pit = randPoints.begin(); pit != randPoints.end(); ++pit, ++fnit) {
             Eigen::Matrix<NT, Eigen::Dynamic, 1> dist_vector = (*pit).getCoefficients();
-            Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
-            for (unsigned int j = 0; j < P.dimension(); j++) {
-                covariance_matrix(j, j) = 1.0 / (2.0 * new_a[j]);
-            }
-            NT mahalanobis_dist = std::sqrt(dist_vector.transpose() * covariance_matrix.inverse() * dist_vector);
-            NT last_a_prod = 1.0;
-            for (unsigned int j = 0; j < last_a.size(); ++j) {
-                last_a_prod *= last_a[j];
-            }
-            *fnit = std::exp(-0.5 * std::pow(mahalanobis_dist, 2.0))
-                    / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(covariance_matrix.determinant()))
-                    / eval_exp_non(*pit, last_a_prod);
+            
+            NT mahalanobis_dist_next = std::sqrt(dist_vector.transpose() * inv_covariance_matrix_next * dist_vector);
+            NT mahalanobis_dist_curr = std::sqrt(dist_vector.transpose() * inv_covariance_matrix_curr * dist_vector);
+            
+            NT density_next = std::exp(-0.5 * std::pow(mahalanobis_dist_next, 2.0));
+            NT density_curr = std::exp(-0.5 * std::pow(mahalanobis_dist_curr, 2.0));
+            
+            *fnit = density_next / density_curr;
         }
 
+
         std::pair<NT, NT> mv = get_mean_variance(fn);
+
         // Compute a_{i+1}
  
         if (mv.second / (mv.first * mv.first) >= C || mv.first / last_ratio < 1.0 + tol) {
@@ -185,6 +196,7 @@ std::vector<NT> get_next_gaussian(
             k = 2 * k;
         }
         last_ratio = mv.first;
+
     }
 
     std::vector<NT> result(last_a.size());
@@ -282,29 +294,33 @@ std::cout << "Get next: " << std::endl;
 #ifdef VOLESTI_DEBUG
 std::cout << "Next Gaussian " << next_a[0] << std::endl;
 #endif
+        // Calculate the covariance matrices outside the loop
+        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix_next = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
+        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix_curr = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
 
-        // Compute some ratios to decide if this is the last gaussian
+        for (unsigned int k = 0; k < P.dimension(); k++) {
+            covariance_matrix_next(k, k) = 1.0 / (2.0 * next_a[k]);
+            covariance_matrix_curr(k, k) = 1.0 / (2.0 * a_vals[it][k]);
+        }
+
+        // Precalculate the inverse matrices
+        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> inv_next = covariance_matrix_next.inverse();
+        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> inv_curr = covariance_matrix_curr.inverse();
+
         for (unsigned int j = 0; j < steps; j++) {
             walk.template apply(rng, walk_length);
             p = walk.getPoint();
-
-
-
             curr_its += 1.0;
-            Eigen::Matrix<NT, Eigen::Dynamic, 1> dist_vector = p.getCoefficients();
-            Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix_next = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
-            Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix_curr = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
-            for (unsigned int k = 0; k < P.dimension(); k++) {
-                covariance_matrix_next(k, k) = 1.0 / (2.0 * next_a[k]);
-                covariance_matrix_curr(k, k) = 1.0 / (2.0 * a_vals[it][k]);
-            }
 
-            NT mahalanobis_dist_next = std::sqrt(dist_vector.transpose() * covariance_matrix_next.inverse() * dist_vector);
-            NT mahalanobis_dist_curr = std::sqrt(dist_vector.transpose() * covariance_matrix_curr.inverse() * dist_vector);
-            curr_fn += std::exp(-0.5 * std::pow(mahalanobis_dist_next, 2.0))
-                        / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(covariance_matrix_next.determinant()))
-                        / (std::exp(-0.5 * std::pow(mahalanobis_dist_curr, 2.0))
-                        / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(covariance_matrix_curr.determinant())));
+            Eigen::Matrix<NT, Eigen::Dynamic, 1> dist_vector = p.getCoefficients();
+
+            NT mahalanobis_dist_next = std::sqrt(dist_vector.transpose() * inv_next * dist_vector);
+            NT mahalanobis_dist_curr = std::sqrt(dist_vector.transpose() * inv_curr * dist_vector);
+
+            NT density_next = std::exp(-0.5 * std::pow(mahalanobis_dist_next, 2.0));
+            NT density_curr = std::exp(-0.5 * std::pow(mahalanobis_dist_curr, 2.0));
+
+            curr_fn += density_next / density_curr;
         }
 
 #ifdef VOLESTI_DEBUG
@@ -540,8 +556,8 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
         const NT epsilon = std::numeric_limits<NT>::epsilon() * 1000; // Adjust as needed
 
         for (unsigned int k = 0; k < P.dimension(); k++) {
-            NT next_val = std::max((*(avalsIt+1))[k], epsilon);
-            NT curr_val = std::max((*avalsIt)[k], epsilon);
+            NT next_val = (*(avalsIt+1))[k];
+            NT curr_val = (*avalsIt)[k];
             covariance_matrix_next(k, k) = 1.0 / (2.0 * next_val);
             covariance_matrix_curr(k, k) = 1.0 / (2.0 * curr_val);
         }
@@ -560,23 +576,16 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
             *itsIt = *itsIt + 1.0;
             
             Eigen::Matrix<NT, Eigen::Dynamic, 1> dist_vector = p.getCoefficients();
-            
-            NT mahalanobis_dist_next = std::sqrt(dist_vector.transpose() * inv_next * dist_vector);
-            NT mahalanobis_dist_curr = std::sqrt(dist_vector.transpose() * inv_curr * dist_vector);
-            
-            NT density_next = std::exp(-0.5 * std::pow(mahalanobis_dist_next, 2.0))
-                            / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(det_next));
-            
-            NT density_curr = std::exp(-0.5 * std::pow(mahalanobis_dist_curr, 2.0))
-                            / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(det_curr));
-            
-            *fnIt += density_next / density_curr;
 
+            NT mahalanobis_dist_next = std::sqrt(dist_vector.transpose() * covariance_matrix_next.inverse() * dist_vector);
+            NT mahalanobis_dist_curr = std::sqrt(dist_vector.transpose() * covariance_matrix_curr.inverse() * dist_vector);
+
+            NT density_next = std::exp(-0.5 * std::pow(mahalanobis_dist_next, 2.0));
+            NT density_curr = std::exp(-0.5 * std::pow(mahalanobis_dist_curr, 2.0));
+
+            *fnIt += density_next / density_curr;
             NT val = (*fnIt) / (*itsIt);
 
-#ifdef VOLESTI_DEBUG
-        std::cout << "density curr: "<< density_curr << std::endl;
-#endif
 
             last_W[index] = val;
             if (val <= min_val)

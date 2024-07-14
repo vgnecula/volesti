@@ -63,6 +63,10 @@ public:
 
     }
 
+    bool isZero() const {
+        return coeffs.isZero();
+    }
+
     void add(const Coeff& coeffs)
     {
         this->coeffs += coeffs;

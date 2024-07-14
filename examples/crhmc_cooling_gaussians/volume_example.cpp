@@ -25,16 +25,8 @@ int main() {
     // Set global seed
     boost::random::mt19937 global_gen(FIXED_SEED);
 
-    HPOLYTOPE simplex = generate_simplex<HPOLYTOPE>(2, false);
-    std::cout << std::endl << "Simplex: " << std::endl;
-    simplex.print();
-    calculateAndVerifyVolume(simplex);
 
-    HPOLYTOPE cube = generate_cube<HPOLYTOPE>(3, false);
-    std::cout << std::endl << "Cube: " << std::endl;
-    cube.print();
-    calculateAndVerifyVolume(cube);
-
+   
     HPOLYTOPE cross = generate_cross<HPOLYTOPE>(3, false);
     std::cout << std::endl << "Cross: " << std::endl;
     cross.print();
@@ -45,5 +37,15 @@ int main() {
     birkhoff.print();
     calculateAndVerifyVolume(birkhoff);
 
+    HPOLYTOPE simplex = generate_simplex<HPOLYTOPE>(2, false);
+    std::cout << std::endl << "Simplex: " << std::endl;
+    simplex.print();
+    calculateAndVerifyVolume(simplex);
+
+    HPOLYTOPE cube = generate_cube<HPOLYTOPE>(3, false);
+    std::cout << std::endl << "Cube: " << std::endl;
+    cube.print();
+    calculateAndVerifyVolume(cube);
+    
     return 0;
 }
