@@ -841,6 +841,19 @@ public:
 
         return dists;
     }
+        
+    std::vector<Eigen::Matrix<NT, Eigen::Dynamic, 1>> get_dists() const
+    {
+        std::vector<Eigen::Matrix<NT, Eigen::Dynamic, 1>> dists;
+        dists.reserve(num_of_hyperplanes());
+        for (unsigned int i = 0; i < num_of_hyperplanes(); ++i)
+        {
+            NT norm = A.row(i).norm();
+            Eigen::Matrix<NT, Eigen::Dynamic, 1> dist_vector = (b(i) / norm) * (A.row(i) / norm);
+            dists.push_back(std::move(dist_vector));
+        }
+        return dists;
+    }
 
     // no points given for the rounding, you have to sample from the polytope
     template <typename T>

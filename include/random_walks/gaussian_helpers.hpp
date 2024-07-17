@@ -10,6 +10,25 @@ NT eval_exp(Point const& p, NT const& a)
     return std::exp(-a * p.squared_length());
 }
 
+template <typename Point, typename NT, typename MT>
+NT eval_exp(Point const& p, MT const& inv_covariance_matrix, NT const& a_next, NT const& a_curr)
+{
+    Eigen::Matrix<NT, Eigen::Dynamic, 1> dist_vector = p.getCoefficients();
+    NT mahalanobis_dist = dist_vector.transpose() * inv_covariance_matrix * dist_vector;
+    NT log_ratio = (a_next - a_curr) * mahalanobis_dist;
+    return std::exp(log_ratio);
+}
+
+/*
+
+std::cout << "------------------------" << std::endl;
+
+std::cout << "Mahalan " << (mahalanobis_dist) <<std::endl;
+std::cout << "A factor " << a <<std::endl;
+std::cout << "Ratio " << std::exp(-a * mahalanobis_dist) <<std::endl;
+std::cout << "------------------------" << std::endl;
+    
+*/
 
 template <typename Point, typename NT>
 NT get_max(Point const& l, Point const& u, NT const& a_i)
