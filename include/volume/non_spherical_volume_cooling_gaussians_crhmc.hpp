@@ -1,3 +1,14 @@
+// VolEsti (volume computation and sampling library)
+
+// Copyright (c) 2012-2024 Vissarion Fisikopoulos
+// Copyright (c) 2018-2024 Apostolos Chalkis
+// Copyright (c) 2024 Vladimir Necula
+
+// Contributed and/or modified by Vladimir Necula, as part of Google Summer of
+// Code 2024 program.
+
+// Licensed under GNU LGPL.3, see LICENCE file
+
 #ifndef VOLUME_COOLING_NON_SPHERICAL_GAUSSIANS_CRHMC_HPP
 #define VOLUME_COOLING_NON_SPHERICAL_GAUSSIANS_CRHMC_HPP
 
@@ -5,24 +16,24 @@
 
 #include "volume/volume_cooling_gaussians.hpp"
 #include "preprocess/crhmc/crhmc_problem.h"
+#include "preprocess/max_inscribed_ellipsoid.hpp"
 
 ////////////////////////////// Algorithms
 
 // Gaussian Anealling
 
 // Compute the first variance a_0 for the starting gaussian
-template <typename Polytope, typename NT>
+template <typename Polytope, typename NT, typename MT>
 void get_first_gaussian(Polytope& P,
                         NT const& frac,
-                        NT const& chebychev_radius,
                         NT const& error,
-                        std::vector<std::vector<NT>>& a_vals)
+                        MT const& initial_covariance_matrix,
+                        std::vector<NT>& a_vals)
 {
     NT tol = std::is_same<float, NT>::value ? 0.001 : 0.0000001;
-
-    std::vector<Eigen::Matrix<NT, Eigen::Dynamic, 1>> dists = P.get_dists_non(chebychev_radius);
-    std::vector<NT> lower(P.dimension(), 0.0);
-    std::vector<NT> upper(P.dimension(), 1.0);
+    std::vector<Eigen::Matrix<NT, Eigen::Dynamic, 1>> dists = P.get_dists();
+    NT lower = 0.0;
+    NT upper = 1.0;
 
     // Compute an upper bound for a_0
     unsigned int i;
@@ -32,22 +43,17 @@ void get_first_gaussian(Polytope& P,
         NT sum = 0.0;
         for (const auto& dist_vector : dists)
         {
-            Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
-            for (unsigned int j = 0; j < P.dimension(); j++)
-                covariance_matrix(j, j) = 1.0 / (2.0 * upper[j]);
-            
-            NT mahalanobis_dist = std::sqrt(dist_vector.transpose() * covariance_matrix.inverse() * dist_vector);
+            MT scaled_covariance = upper * initial_covariance_matrix;
+            NT mahalanobis_dist = std::sqrt(dist_vector.transpose() * scaled_covariance.inverse() * dist_vector);
             sum += std::exp(-0.5 * std::pow(mahalanobis_dist, 2.0))
-                / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(covariance_matrix.determinant()));
+                   / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(scaled_covariance.determinant()));
         }
-        
         if (sum > frac * error)
         {
-            for (unsigned int j = 0; j < P.dimension(); j++)
-                upper[j] = upper[j] * 10;
-        }
-        else
+            upper *= 10;
+        } else {
             break;
+        }
     }
 
     if (i == maxiter) {
@@ -58,51 +64,27 @@ void get_first_gaussian(Polytope& P,
     }
 
     // get a_0 with binary search
-    while (true) {
-        bool converged = true;
-        for (unsigned int j = 0; j < P.dimension(); j++) 
-        {
-            if (upper[j] - lower[j] > tol) {
-                converged = false;
-                break;
-            }
-        }
-        if (converged)
-            break;
-
-        std::vector<NT> mid(P.dimension());
-        for (unsigned int j = 0; j < P.dimension(); j++)
-            mid[j] = (upper[j] + lower[j]) / 2.0;
-
+    while (upper - lower > tol) {
+        NT mid = (upper + lower) / 2.0;
         NT sum = 0.0;
-        for (auto it = dists.begin(); it != dists.end(); it++) 
+        for (const auto& dist_vector : dists)
         {
-            Eigen::Matrix<NT, Eigen::Dynamic, 1> dist_vector(*it);
-            Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
-            
-            for (unsigned int j = 0; j < P.dimension(); j++) 
-                covariance_matrix(j, j) = 1.0 / (2.0 * mid[j]);
-
-            NT mahalanobis_dist = std::sqrt(dist_vector.transpose() * covariance_matrix.inverse() * dist_vector);
+            MT scaled_covariance = mid * initial_covariance_matrix;
+            NT mahalanobis_dist = std::sqrt(dist_vector.transpose() * scaled_covariance.inverse() * dist_vector);
             sum += std::exp(-0.5 * std::pow(mahalanobis_dist, 2.0))
-                   / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(covariance_matrix.determinant()));
+                   / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(scaled_covariance.determinant()));
         }
-        if (sum < frac * error) 
+        if (sum < frac * error)
         {
-            for (unsigned int j = 0; j < P.dimension(); j++)
-                upper[j] = mid[j];
-        } 
+            upper = mid;
+        }
         else {
-            for (unsigned int j = 0; j < P.dimension(); j++)
-                lower[j] = mid[j];
+            lower = mid;
         }
     }
 
-    std::vector<NT> a_vals_0(P.dimension());
-    for (unsigned int j = 0; j < P.dimension(); j++)
-        a_vals_0[j] = (upper[j] + lower[j]) / NT(2.0);
-
-    a_vals.push_back(a_vals_0);
+    NT a_0 = (upper + lower) / NT(2.0);
+    a_vals.push_back(a_0);;
 }
 
 
@@ -115,15 +97,16 @@ template<
     typename Grad,
     typename Func,
     typename CrhmcProblem,
+    typename MT,
     typename Polytope,
     typename Point,
     typename NT,
     typename RandomNumberGenerator
 >
-std::vector<NT> get_next_gaussian(
+NT get_next_gaussian(
     Polytope& P,
     Point &p,
-    std::vector<NT> const& a,
+    NT const& a,
     const unsigned int &N,
     const NT &ratio,
     const NT &C,
@@ -133,17 +116,16 @@ std::vector<NT> get_next_gaussian(
     Func& f,
     walk_params& parameters,
     CrhmcProblem& problem,
-    WalkType& crhmc_walk
+    WalkType& crhmc_walk,
+    MT const& initial_covariance_matrix
 ) {
-    std::vector<NT> last_a = a;
+    NT last_a = a;
     NT last_ratio = 0.1;
-    // k is needed for the computation of the next variance a_{i+1} = a_i * (1-1/d)^k
     NT k = 1.0;
     const NT tol = 0.00001;
     bool done = false;
     std::vector<NT> fn(N, NT(0.0));
     std::list<Point> randPoints;
-    typedef typename std::vector<NT>::iterator viterator;
 
     // sample N points
     PushBackWalkPolicy push_back_policy;
@@ -152,41 +134,29 @@ std::vector<NT> get_next_gaussian(
 
 
     while (!done) {
-        std::vector<NT> new_a(last_a.size());
-        for (unsigned int j = 0; j < last_a.size(); j++) {
-            new_a[j] = last_a[j] * std::pow(ratio, k);
-        }
+        NT new_a = last_a * std::pow(ratio, k);
 
-        // Precalculate the covariance matrices
-        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix_next = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
-        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix_curr = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
-        for (unsigned int j = 0; j < P.dimension(); j++) {
-            covariance_matrix_next(j, j) = 1.0 / (2.0 * new_a[j]);
-            covariance_matrix_curr(j, j) = 1.0 / (2.0 * last_a[j]);
-        }
+#ifdef VOLESTI_DEBUG
+    std::cout << "\n\n New a "<< new_a <<std::endl;
+#endif
 
-        // Precalculate the inverse of the covariance matrices
-        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> inv_covariance_matrix_next = covariance_matrix_next.inverse();
-        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> inv_covariance_matrix_curr = covariance_matrix_curr.inverse();
+
+        // calculate the inverse matrix
+        MT inv_covariance_matrix = initial_covariance_matrix.inverse();
 
         auto fnit = fn.begin();
-        for (auto pit = randPoints.begin(); pit != randPoints.end(); ++pit, ++fnit) {
-            Eigen::Matrix<NT, Eigen::Dynamic, 1> dist_vector = (*pit).getCoefficients();
-            
-            NT mahalanobis_dist_next = std::sqrt(dist_vector.transpose() * inv_covariance_matrix_next * dist_vector);
-            NT mahalanobis_dist_curr = std::sqrt(dist_vector.transpose() * inv_covariance_matrix_curr * dist_vector);
-            
-            NT density_next = std::exp(-0.5 * std::pow(mahalanobis_dist_next, 2.0));
-            NT density_curr = std::exp(-0.5 * std::pow(mahalanobis_dist_curr, 2.0));
-            
-            *fnit = density_next / density_curr;
+        for (auto pit = randPoints.begin(); pit != randPoints.end(); ++pit, fnit++) {
+            *fnit = eval_exp(*pit, inv_covariance_matrix, new_a, last_a);
         }
 
-
         std::pair<NT, NT> mv = get_mean_variance(fn);
+#ifdef VOLESTI_DEBUG
+    std::cout << "Mean "<< mv.first <<std::endl;
+    std::cout << "Variance "<< mv.second <<std::endl;
+    std::cout << "Last ratio " << last_ratio <<std::endl;
+#endif
 
         // Compute a_{i+1}
- 
         if (mv.second / (mv.first * mv.first) >= C || mv.first / last_ratio < 1.0 + tol) {
             if (k != 1.0) {
                 k = k / 2;
@@ -195,16 +165,12 @@ std::vector<NT> get_next_gaussian(
         } else {
             k = 2 * k;
         }
+
         last_ratio = mv.first;
-
     }
 
-    std::vector<NT> result(last_a.size());
-    for (unsigned int j = 0; j < last_a.size(); j++) {
-        result[j] = last_a[j] * std::pow(ratio, k);
-    }
-
-    return result;
+    // Return the new a value as a scalar
+    return last_a * std::pow(ratio, k);
 }
 
 
@@ -219,6 +185,7 @@ template<
     typename Hess,
     typename func_params,
     typename Input,
+    typename MT,
     typename Polytope,
     typename NT,
     typename RandomNumberGenerator
@@ -230,9 +197,9 @@ void compute_annealing_schedule(
     NT const& frac,
     unsigned int const& N,
     unsigned int const& walk_length,
-    NT const& chebychev_radius,
     NT const& error,
-    std::vector<std::vector<NT>>& a_vals,
+    std::vector<NT>& a_vals,
+    MT const& initial_covariance_matrix,
     RandomNumberGenerator& rng
 ) {
     typedef typename Polytope::PointType Point;
@@ -240,30 +207,29 @@ void compute_annealing_schedule(
 
     // Compute the first gaussian
     // This uses the function from the standard volume_cooling_gaussians.hpp
-    get_first_gaussian(P, frac, chebychev_radius, error, a_vals);
-    std::vector<NT> a_stop(P.dimension(), 0.0);
+    get_first_gaussian(P, frac, error, initial_covariance_matrix, a_vals);
+
+#ifdef VOLESTI_DEBUG
+    std::cout << "first gaussian computed " << a_vals[0] << std::endl;
+#endif
+
+    NT a_stop = 0.0;
     const NT tol = 0.001;
     unsigned int it = 0;
     unsigned int n = P.dimension();
     const unsigned int totalSteps = ((int)150/((1.0 - frac) * error)) + 1;
 
-    for (unsigned int j = 0; j < P.dimension(); j++) {
-        if (a_vals[0][j] < a_stop[j]) a_vals[0][j] = a_stop[j];
-    }
+    if (a_vals[0]<a_stop) a_vals[0] = a_stop;
 
 #ifdef VOLESTI_DEBUG
-std::cout << "first gaussian computed " << a_vals[0][0] << std::endl;
-std::cout << "Computing the sequence of gaussians..\n" << std::endl;
+    std::cout << "Computing the sequence of gaussians..\n" << std::endl;
 #endif
 
     while (true) {
-        NT curr_fn = 0;
-        NT curr_its = 0;
-        auto steps = totalSteps;
 
         // Create the CRHMC problem for this variance
         int dimension = P.dimension();
-        func_params f_params = func_params(Point(dimension), a_vals[it], 1);
+        func_params f_params = func_params(Point(dimension), a_vals[it], 1, initial_covariance_matrix);
         Func f(f_params);
         Grad g(f_params);
         Hess h(f_params);
@@ -278,76 +244,50 @@ std::cout << "Computing the sequence of gaussians..\n" << std::endl;
             params.eta = input.df.params.eta;
         }
 
-        int dim = p.dimension();
-
         // Create the walk object for this problem
         WalkType walk = WalkType(problem, p, input.df, input.f, params);
+
 
 #ifdef VOLESTI_DEBUG
 std::cout << "Get next: " << std::endl;
 #endif   
 
         // Compute the next gaussian
-        std::vector<NT> next_a = get_next_gaussian<WalkType, walk_params, RandomPointGenerator, simdLen, Grad, Func, CrhmcProblem>(
-            P, p, a_vals[it], N, ratio, C, walk_length, rng, g, f, params, problem, walk);
+        NT next_a = get_next_gaussian<WalkType, walk_params, RandomPointGenerator, simdLen, Grad, Func, CrhmcProblem, MT>(
+            P, p, a_vals[it], N, ratio, C, walk_length, rng, g, f, params, problem, walk, initial_covariance_matrix);
+
+
+        NT curr_fn = 0;
+        NT curr_its = 0;
+        auto steps = totalSteps;
 
 #ifdef VOLESTI_DEBUG
-std::cout << "Next Gaussian " << next_a[0] << std::endl;
+std::cout << "Next Gaussian " << next_a << std::endl;
 #endif
-        // Calculate the covariance matrices outside the loop
-        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix_next = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
-        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix_curr = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
 
-        for (unsigned int k = 0; k < P.dimension(); k++) {
-            covariance_matrix_next(k, k) = 1.0 / (2.0 * next_a[k]);
-            covariance_matrix_curr(k, k) = 1.0 / (2.0 * a_vals[it][k]);
-        }
+        // calculate the inverse matrix
+        MT inv_covariance_matrix = initial_covariance_matrix.inverse();
 
-        // Precalculate the inverse matrices
-        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> inv_next = covariance_matrix_next.inverse();
-        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> inv_curr = covariance_matrix_curr.inverse();
-
-        for (unsigned int j = 0; j < steps; j++) {
+        // Compute some ratios to decide if this is the last gaussian
+        for (unsigned int j = 0; j < steps; j++) 
+        {
             walk.template apply(rng, walk_length);
             p = walk.getPoint();
-            curr_its += 1.0;
-
-            Eigen::Matrix<NT, Eigen::Dynamic, 1> dist_vector = p.getCoefficients();
-
-            NT mahalanobis_dist_next = std::sqrt(dist_vector.transpose() * inv_next * dist_vector);
-            NT mahalanobis_dist_curr = std::sqrt(dist_vector.transpose() * inv_curr * dist_vector);
-
-            NT density_next = std::exp(-0.5 * std::pow(mahalanobis_dist_next, 2.0));
-            NT density_curr = std::exp(-0.5 * std::pow(mahalanobis_dist_curr, 2.0));
-
-            curr_fn += density_next / density_curr;
+            curr_its += 1.0;    
+            curr_fn += eval_exp(p, inv_covariance_matrix, next_a, a_vals[it]);
         }
 
 #ifdef VOLESTI_DEBUG
-std::cout << "Condition function ratio " << curr_fn / curr_its << std::endl;
-
-std::cout << "Print next_a "<< std::endl;
-for (unsigned int j = 0; j < P.dimension(); j++) {
-    std::cout << next_a[j] << std::endl;        
-}
+    std::cout<<"Ratio = "<< curr_fn / curr_its <<"\n"<<std::endl;
 #endif
-
         // Remove the last gaussian.
         // Set the last a_i equal to zero
-        bool all_positive = true;
-        for (unsigned int j = 0; j < P.dimension(); j++) {
-            if (next_a[j] <= 0) {
-                all_positive = false;
-                break;
-            }
-        }
-
-        if (all_positive && curr_fn / curr_its > (1.0 + tol)) {
-
+        if (next_a > 0 && curr_fn / curr_its > (1.0 + tol)) 
+        {
             a_vals.push_back(next_a);
             it++;
-
-        } else if (!all_positive) {
+        } else if (next_a <= 0) 
+        {
             a_vals.push_back(a_stop);
             it++;
             break;
@@ -356,7 +296,6 @@ for (unsigned int j = 0; j < P.dimension(); j++) {
             break;
         }
     }
-
 }
 
 
@@ -364,11 +303,11 @@ template <typename NT>
 struct non_gaussian_annealing_parameters
 {
     non_gaussian_annealing_parameters(unsigned int d)
-        :   frac(0.1)
-        ,   ratio(NT(1)-NT(1)/(NT(d)))
-        ,   C(NT(2))
-        ,   N(500 * ((int) C) + ((int) (d * d / 2)))
-        ,   W(6*d*d+800)
+        : frac(0.1)
+        , ratio(NT(1) - NT(1) / NT(d))
+        , C(NT(2))
+        , N(500 * ((int) C) + ((int) (d * d)))
+        , W(6 * d * d + 800)
     {}
 
     NT frac;
@@ -395,10 +334,10 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     typedef typename Point::FT     NT;
     typedef typename Polytope::VT  VT;
     typedef typename Polytope::MT  MT;
-    typedef typename GaussianFunctor::FunctionFunctor<Point>    Func;
-    typedef typename GaussianFunctor::GradientFunctor<Point>    Grad;
-    typedef typename GaussianFunctor::HessianFunctor<Point>     Hess;
-    typedef typename GaussianFunctor::parameters<NT, Point>     func_params;
+    typedef typename NonSphericalGaussianFunctor::FunctionFunctor<Point>    Func;
+    typedef typename NonSphericalGaussianFunctor::GradientFunctor<Point>    Grad;
+    typedef typename NonSphericalGaussianFunctor::HessianFunctor<Point>     Hess;
+    typedef typename NonSphericalGaussianFunctor::parameters<NT, Point>     func_params;
 
     typedef crhmc_input<MT, Point, Func, Grad, Hess> Input;
     typedef crhmc_problem<Point, Input> CrhmcProblem;   
@@ -426,8 +365,7 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     auto P(Pin); //copy and work with P because we are going to shift
     unsigned int n = P.dimension();
     unsigned int m = P.num_of_hyperplanes();
-    non_gaussian_annealing_parameters<NT> parameters(P.dimension());
-
+    
     // Consider Chebychev center as an internal point
     auto InnerBall = P.ComputeInnerBall();
     if (InnerBall.second < 0.0) return -1.0;
@@ -435,8 +373,33 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     Point c = InnerBall.first;
     NT radius = InnerBall.second;
 
-    // Move the chebychev center to the origin and apply the same shifting to the polytope
-    P.shift(c.getCoefficients());
+    NT tol = 0.0001;
+    NT reg = 0.0001;
+
+    // Get the matrix A and vector b of the polytope
+    MT A = P.get_mat();
+    VT b = P.get_vec();
+
+    // Call the max_inscribed_ellipsoid function
+    unsigned int maxiter = 100;
+    auto ellipsoid_result = max_inscribed_ellipsoid<MT, MT, VT, NT>(A, b, c.getCoefficients(), maxiter, tol, reg);
+
+    // Extract the covariance matrix and center of the ellipsoid
+    MT covariance_matrix = ellipsoid_result.first.first;
+    VT center = ellipsoid_result.first.second;
+
+
+#ifdef VOLESTI_DEBUG
+    std::cout<<"\n\nExtracted the covariance matrix...\n"<<std::endl;
+    std::cout<< covariance_matrix <<std::endl;
+#endif
+
+    // Move the polytope to align with the elipsoid center
+    P.shift(center);
+
+    // Initialize the gaussian_annealing_parameters struct
+    non_gaussian_annealing_parameters<NT> parameters(P.dimension());
+
 
     // Computing the sequence of gaussians
 #ifdef VOLESTI_DEBUG
@@ -445,7 +408,7 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
 #endif
 
     // Initialization for the schedule annealing
-    std::vector<std::vector<NT>> a_vals;
+    std::vector<NT> a_vals;
     NT ratio = parameters.ratio;
     NT C = parameters.C;
     unsigned int N = parameters.N;
@@ -460,8 +423,9 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
         Func,
         Hess,
         func_params,
-        Input
-    >(P, ratio, C, parameters.frac, N, walk_length, radius, error, a_vals, rng);
+        Input,
+        MT
+    >(P, ratio, C, parameters.frac, N, walk_length, error, a_vals, covariance_matrix, rng);
 
 
 #ifdef VOLESTI_DEBUG
@@ -469,13 +433,9 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
             << (double)clock()/(double)CLOCKS_PER_SEC-tstart2<<" sec"<<std::endl;
     auto j=0;
     for (auto avalIt = a_vals.begin(); avalIt!=a_vals.end(); avalIt++, j++){
-        std::cout<<"a_"<<j<<" = ";
-        for (auto aIt = avalIt->begin(); aIt != avalIt->end(); aIt++) {
-            std::cout << *aIt << " ";
-        }
-        std::cout << std::endl;
+        std::cout<<"a_"<<j<<" = "<<*avalIt<<" ";
     }
-    std::cout<<std::endl;
+    std::cout<<std::endl<<std::endl;
 #endif
 
     // Initialization for the approximation of the ratios
@@ -487,10 +447,7 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     VT lamdas;
     lamdas.setZero(m);
     
-    NT vol = 1.0;
-    for (unsigned int j = 0; j < n; j++) {
-        vol *= std::sqrt(M_PI / a_vals[0][j]);
-    }
+    NT vol = std::pow(M_PI / a_vals[0], NT(n) / 2.0);
 
     unsigned int i=0;
 
@@ -524,7 +481,7 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
         // Set the radius for the ball walk
         //creating the walk object
         int dimension = P.dimension();
-        func_params f_params = func_params(Point(dimension), *avalsIt, 1);
+        func_params f_params = func_params(Point(dimension), *avalsIt, 1, covariance_matrix);
         
         Func f(f_params);
         Grad g(f_params);
@@ -549,27 +506,15 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
 
         WalkType walk = WalkType(problem, p, input.df, input.f, params);
 
-        // Precalculate the covariance matrices outside the while loop
-        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix_next = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
-        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> covariance_matrix_curr = Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic>::Zero(P.dimension(), P.dimension());
+        // Calculate the covariance matrices
+        MT covariance_matrix_next = (*(avalsIt+1)) * covariance_matrix;
+        MT covariance_matrix_curr = (*avalsIt) * covariance_matrix;
 
-        const NT epsilon = std::numeric_limits<NT>::epsilon() * 1000; // Adjust as needed
+        // Precalculate the inverse matrices
+        MT inv_next = covariance_matrix_next.inverse();
+        MT inv_curr = covariance_matrix_curr.inverse();
 
-        for (unsigned int k = 0; k < P.dimension(); k++) {
-            NT next_val = (*(avalsIt+1))[k];
-            NT curr_val = (*avalsIt)[k];
-            covariance_matrix_next(k, k) = 1.0 / (2.0 * next_val);
-            covariance_matrix_curr(k, k) = 1.0 / (2.0 * curr_val);
-        }
-
-        // Precalculate the determinants and inverse matrices
-        NT det_next = covariance_matrix_next.determinant();
-        NT det_curr = covariance_matrix_curr.determinant();
-        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> inv_next = covariance_matrix_next.inverse();
-        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> inv_curr = covariance_matrix_curr.inverse();
-
-
-        while (!done || (*itsIt)<min_steps)
+        while (!done || (*itsIt) < min_steps)
         {
             walk.template apply(rng, walk_length);
             p = walk.getPoint();
@@ -577,15 +522,11 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
             
             Eigen::Matrix<NT, Eigen::Dynamic, 1> dist_vector = p.getCoefficients();
 
-            NT mahalanobis_dist_next = std::sqrt(dist_vector.transpose() * covariance_matrix_next.inverse() * dist_vector);
-            NT mahalanobis_dist_curr = std::sqrt(dist_vector.transpose() * covariance_matrix_curr.inverse() * dist_vector);
+            NT mahalanobis_dist_next = dist_vector.transpose() * inv_next * dist_vector;
+            NT mahalanobis_dist_curr = dist_vector.transpose() * inv_curr * dist_vector;
 
-            NT density_next = std::exp(-0.5 * std::pow(mahalanobis_dist_next, 2.0));
-            NT density_curr = std::exp(-0.5 * std::pow(mahalanobis_dist_curr, 2.0));
-
-            *fnIt += density_next / density_curr;
+            *fnIt += std::exp(-0.5 * (mahalanobis_dist_next - mahalanobis_dist_curr));
             NT val = (*fnIt) / (*itsIt);
-
 
             last_W[index] = val;
             if (val <= min_val)
@@ -610,12 +551,12 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
                 max_index = std::distance(last_W.begin(), minmaxIt);
             }
 
-            if ( (max_val-min_val)/max_val <= curr_eps/2.0 )
+            if ((max_val - min_val) / max_val <= curr_eps / 2.0)
             {
-                done=true;
+                done = true;
             }
 
-            index = index%W + 1;
+            index = index % W + 1;
             if (index == W) index = 0;
         }
 #ifdef VOLESTI_DEBUG

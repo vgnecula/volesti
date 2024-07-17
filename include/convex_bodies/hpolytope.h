@@ -842,11 +842,10 @@ public:
         return dists;
     }
         
-    std::vector<Eigen::Matrix<NT, Eigen::Dynamic, 1>> get_dists_non(NT const& radius) const
+    std::vector<Eigen::Matrix<NT, Eigen::Dynamic, 1>> get_dists() const
     {
         std::vector<Eigen::Matrix<NT, Eigen::Dynamic, 1>> dists;
         dists.reserve(num_of_hyperplanes());
-
         for (unsigned int i = 0; i < num_of_hyperplanes(); ++i)
         {
             NT norm = A.row(i).norm();

@@ -14,10 +14,11 @@ typedef BoostRandomNumberGenerator<boost::mt11213b, NT, FIXED_SEED> RandomNumber
 typedef HPolytope<Point> HPOLYTOPE;
 
 void calculateAndVerifyVolume(HPOLYTOPE& polytope) {
-    int walk_len = 100;
+    int walk_len = 10;
     NT e = 0.1;
     RandomNumberGenerator rng;
     NT volume = non_spherical_crhmc_volume_cooling_gaussians<HPOLYTOPE, RandomNumberGenerator>(polytope, rng, e, walk_len);
+    //NT volume = volume_cooling_gaussians<GaussianCDHRWalk,HPOLYTOPE, RandomNumberGenerator>(polytope, rng, e, walk_len);
     std::cout << "Volume " << volume << std::endl;
 }
 
@@ -25,8 +26,12 @@ int main() {
     // Set global seed
     boost::random::mt19937 global_gen(FIXED_SEED);
 
+    HPOLYTOPE cube = generate_cube<HPOLYTOPE>(4, false);
+    std::cout << std::endl << "Cube: " << std::endl;
+    cube.print();
+    calculateAndVerifyVolume(cube);
 
-   
+/*   
     HPOLYTOPE cross = generate_cross<HPOLYTOPE>(3, false);
     std::cout << std::endl << "Cross: " << std::endl;
     cross.print();
@@ -46,6 +51,6 @@ int main() {
     std::cout << std::endl << "Cube: " << std::endl;
     cube.print();
     calculateAndVerifyVolume(cube);
-    
+*/
     return 0;
 }
