@@ -12,7 +12,7 @@
 #ifndef VOLUME_COOLING_NON_SPHERICAL_GAUSSIANS_CRHMC_HPP
 #define VOLUME_COOLING_NON_SPHERICAL_GAUSSIANS_CRHMC_HPP
 
-#define VOLESTI_DEBUG
+//#define VOLESTI_DEBUG
 
 #include "volume/volume_cooling_gaussians.hpp"
 #include "preprocess/crhmc/crhmc_problem.h"
@@ -27,7 +27,7 @@ template <typename Polytope, typename NT, typename MT>
 void get_first_gaussian(Polytope& P,
                         NT const& frac,
                         NT const& error,
-                        MT const& initial_covariance_matrix,
+                        MT const& inv_covariance_matrix,
                         std::vector<NT>& a_vals)
 {
     NT tol = std::is_same<float, NT>::value ? 0.001 : 0.0000001;
@@ -43,10 +43,10 @@ void get_first_gaussian(Polytope& P,
         NT sum = 0.0;
         for (const auto& dist_vector : dists)
         {
-            MT scaled_covariance = upper * initial_covariance_matrix;
-            NT mahalanobis_dist = std::sqrt(dist_vector.transpose() * scaled_covariance.inverse() * dist_vector);
+            MT scaled_inv_covariance = upper * inv_covariance_matrix;
+            NT mahalanobis_dist = std::sqrt(dist_vector.transpose() * scaled_inv_covariance * dist_vector);
             sum += std::exp(-0.5 * std::pow(mahalanobis_dist, 2.0))
-                   / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(scaled_covariance.determinant()));
+                   / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(scaled_inv_covariance.determinant()));
         }
         if (sum > frac * error)
         {
@@ -69,10 +69,10 @@ void get_first_gaussian(Polytope& P,
         NT sum = 0.0;
         for (const auto& dist_vector : dists)
         {
-            MT scaled_covariance = mid * initial_covariance_matrix;
-            NT mahalanobis_dist = std::sqrt(dist_vector.transpose() * scaled_covariance.inverse() * dist_vector);
+            MT scaled_inv_covariance = mid * inv_covariance_matrix;
+            NT mahalanobis_dist = std::sqrt(dist_vector.transpose() * scaled_inv_covariance * dist_vector);
             sum += std::exp(-0.5 * std::pow(mahalanobis_dist, 2.0))
-                   / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(scaled_covariance.determinant()));
+                   / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(scaled_inv_covariance.determinant()));
         }
         if (sum < frac * error)
         {
@@ -117,7 +117,7 @@ NT get_next_gaussian(
     walk_params& parameters,
     CrhmcProblem& problem,
     WalkType& crhmc_walk,
-    MT const& initial_covariance_matrix
+    MT const& inv_covariance_matrix
 ) {
     NT last_a = a;
     NT last_ratio = 0.1;
@@ -139,10 +139,6 @@ NT get_next_gaussian(
 #ifdef VOLESTI_DEBUG
     std::cout << "\n\n New a "<< new_a <<std::endl;
 #endif
-
-
-        // calculate the inverse matrix
-        MT inv_covariance_matrix = initial_covariance_matrix.inverse();
 
         auto fnit = fn.begin();
         for (auto pit = randPoints.begin(); pit != randPoints.end(); ++pit, fnit++) {
@@ -199,7 +195,7 @@ void compute_annealing_schedule(
     unsigned int const& walk_length,
     NT const& error,
     std::vector<NT>& a_vals,
-    MT const& initial_covariance_matrix,
+    MT const& inv_covariance_matrix,
     RandomNumberGenerator& rng
 ) {
     typedef typename Polytope::PointType Point;
@@ -207,7 +203,7 @@ void compute_annealing_schedule(
 
     // Compute the first gaussian
     // This uses the function from the standard volume_cooling_gaussians.hpp
-    get_first_gaussian(P, frac, error, initial_covariance_matrix, a_vals);
+    get_first_gaussian(P, frac, error, inv_covariance_matrix, a_vals);
 
 #ifdef VOLESTI_DEBUG
     std::cout << "first gaussian computed " << a_vals[0] << std::endl;
@@ -229,7 +225,7 @@ void compute_annealing_schedule(
 
         // Create the CRHMC problem for this variance
         int dimension = P.dimension();
-        func_params f_params = func_params(Point(dimension), a_vals[it], 1, initial_covariance_matrix);
+        func_params f_params = func_params(Point(dimension), a_vals[it], 1, inv_covariance_matrix);
         Func f(f_params);
         Grad g(f_params);
         Hess h(f_params);
@@ -254,7 +250,7 @@ std::cout << "Get next: " << std::endl;
 
         // Compute the next gaussian
         NT next_a = get_next_gaussian<WalkType, walk_params, RandomPointGenerator, simdLen, Grad, Func, CrhmcProblem, MT>(
-            P, p, a_vals[it], N, ratio, C, walk_length, rng, g, f, params, problem, walk, initial_covariance_matrix);
+            P, p, a_vals[it], N, ratio, C, walk_length, rng, g, f, params, problem, walk, inv_covariance_matrix);
 
 
         NT curr_fn = 0;
@@ -264,9 +260,6 @@ std::cout << "Get next: " << std::endl;
 #ifdef VOLESTI_DEBUG
 std::cout << "Next Gaussian " << next_a << std::endl;
 #endif
-
-        // calculate the inverse matrix
-        MT inv_covariance_matrix = initial_covariance_matrix.inverse();
 
         // Compute some ratios to decide if this is the last gaussian
         for (unsigned int j = 0; j < steps; j++) 
@@ -366,32 +359,27 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     unsigned int n = P.dimension();
     unsigned int m = P.num_of_hyperplanes();
     
-    // Consider Chebychev center as an internal point
-    auto InnerBall = P.ComputeInnerBall();
-    if (InnerBall.second < 0.0) return -1.0;
-
-    Point c = InnerBall.first;
-    NT radius = InnerBall.second;
-
-    NT tol = 0.0001;
-    NT reg = 0.0001;
-
     // Get the matrix A and vector b of the polytope
     MT A = P.get_mat();
     VT b = P.get_vec();
 
-    // Call the max_inscribed_ellipsoid function
+    // get the inverse covariance matrix of themax inscribed ellipsoid
+    Point q(P.dimension());
+    unsigned int max_iter = 150;
+    NT tol = std::pow(10, -6.0), reg = std::pow(10, -4.0);
+    VT x0 = q.getCoefficients();
+
     unsigned int maxiter = 100;
-    auto ellipsoid_result = max_inscribed_ellipsoid<MT, MT, VT, NT>(A, b, c.getCoefficients(), maxiter, tol, reg);
+    auto ellipsoid_result = max_inscribed_ellipsoid<MT>(A, b, x0, maxiter, tol, reg);
 
     // Extract the covariance matrix and center of the ellipsoid
-    MT covariance_matrix = ellipsoid_result.first.first;
-    VT center = ellipsoid_result.first.second;
+    Eigen::MatrixXd inv_covariance_matrix = std::get<0>(ellipsoid_result);
+    VT center = std::get<1>(ellipsoid_result);
 
 
 #ifdef VOLESTI_DEBUG
     std::cout<<"\n\nExtracted the covariance matrix...\n"<<std::endl;
-    std::cout<< covariance_matrix <<std::endl;
+    std::cout<< inv_covariance_matrix <<std::endl;
 #endif
 
     // Move the polytope to align with the elipsoid center
@@ -425,7 +413,7 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
         func_params,
         Input,
         MT
-    >(P, ratio, C, parameters.frac, N, walk_length, error, a_vals, covariance_matrix, rng);
+    >(P, ratio, C, parameters.frac, N, walk_length, error, a_vals, inv_covariance_matrix, rng);
 
 
 #ifdef VOLESTI_DEBUG
@@ -481,7 +469,7 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
         // Set the radius for the ball walk
         //creating the walk object
         int dimension = P.dimension();
-        func_params f_params = func_params(Point(dimension), *avalsIt, 1, covariance_matrix);
+        func_params f_params = func_params(Point(dimension), *avalsIt, 1, inv_covariance_matrix);
         
         Func f(f_params);
         Grad g(f_params);
@@ -506,26 +494,14 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
 
         WalkType walk = WalkType(problem, p, input.df, input.f, params);
 
-        // Calculate the covariance matrices
-        MT covariance_matrix_next = (*(avalsIt+1)) * covariance_matrix;
-        MT covariance_matrix_curr = (*avalsIt) * covariance_matrix;
-
-        // Precalculate the inverse matrices
-        MT inv_next = covariance_matrix_next.inverse();
-        MT inv_curr = covariance_matrix_curr.inverse();
-
         while (!done || (*itsIt) < min_steps)
         {
             walk.template apply(rng, walk_length);
             p = walk.getPoint();
             *itsIt = *itsIt + 1.0;
             
-            Eigen::Matrix<NT, Eigen::Dynamic, 1> dist_vector = p.getCoefficients();
+            *fnIt += eval_exp(p, inv_covariance_matrix, *(avalsIt+1), *avalsIt);
 
-            NT mahalanobis_dist_next = dist_vector.transpose() * inv_next * dist_vector;
-            NT mahalanobis_dist_curr = dist_vector.transpose() * inv_curr * dist_vector;
-
-            *fnIt += std::exp(-0.5 * (mahalanobis_dist_next - mahalanobis_dist_curr));
             NT val = (*fnIt) / (*itsIt);
 
             last_W[index] = val;

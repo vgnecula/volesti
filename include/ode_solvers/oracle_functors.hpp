@@ -310,88 +310,150 @@ struct ExponentialFunctor {
 
 struct GaussianFunctor {
 
-  template <
-      typename NT,
-      typename Point
-  >
-  struct parameters {
-    Point x0;
-    NT a;
-    NT eta;
-    unsigned int order;
-    NT L; // Lipschitz constant for gradient
-    NT m; // Strong convexity constant
-    NT kappa; // Condition number
+    template <
+        typename NT,
+        typename Point
+    >
+    struct parameters {
+        Point x0;
+        NT a;
+        NT eta;
+        unsigned int order;
+        NT L; // Lipschitz constant for gradient
+        NT m; // Strong convexity constant
+        NT kappa; // Condition number
 
-    parameters(Point x0_, NT a_, NT eta_) :
-        x0(x0_), a(a_), eta(eta_), order(2), L(2 * a_), m(2 * a_), kappa(1) {};
+        parameters(Point x0_, NT a_, NT eta_) :
+            x0(x0_), a(a_), eta(eta_), order(2), L(2 * a_), m(2 * a_), kappa(1) {};
 
-  };
+    };
 
-  template
-  <
-      typename Point
-  >
-  struct GradientFunctor {
-    typedef typename Point::FT NT;
-    typedef std::vector<Point> pts;
+    template
+    <
+        typename Point
+    >
+    struct GradientFunctor {
+        typedef typename Point::FT NT;
+        typedef std::vector<Point> pts;
 
-    parameters<NT, Point> &params;
+        parameters<NT, Point> &params;
 
-    GradientFunctor(parameters<NT, Point> &params_) : params(params_) {};
+        GradientFunctor(parameters<NT, Point> &params_) : params(params_) {};
 
-    // The index i represents the state vector index
-    Point operator() (unsigned int const& i, pts const& xs, NT const& t) const {
-      if (i == params.order - 1) {
-        Point y = (-2.0 * params.a) * (xs[0] - params.x0);
+        // The index i represents the state vector index
+        Point operator() (unsigned int const& i, pts const& xs, NT const& t) const {
+        if (i == params.order - 1) {
+            Point y = (-2.0 * params.a) * (xs[0] - params.x0);
+            return y;
+        } else {
+            return xs[i + 1]; // returns derivative
+        }
+        }
+        Point operator()(Point const&x){
+        Point y = (-2.0 * params.a) * (x - params.x0);
         return y;
-      } else {
-        return xs[i + 1]; // returns derivative
-      }
-    }
-    Point operator()(Point const&x){
-      Point y = (-2.0 * params.a) * (x - params.x0);
-      return y;
-    }
-  };
+        }
+    };
 
-  template
-  <
+    template
+    <
+        typename Point
+    >
+    struct FunctionFunctor {
+        typedef typename Point::FT NT;
+
+        parameters<NT, Point> &params;
+
+        FunctionFunctor(parameters<NT, Point> &params_) : params(params_) {};
+
+        // The index i represents the state vector index
+        NT operator() (Point const& x) const {
+        Point y = x - params.x0;
+        return params.a * y.dot(y);
+        }
+
+    };
+
+    template
+    <
     typename Point
-  >
-  struct FunctionFunctor {
+    >
+    struct HessianFunctor {
     typedef typename Point::FT NT;
 
     parameters<NT, Point> &params;
 
-    FunctionFunctor(parameters<NT, Point> &params_) : params(params_) {};
+    HessianFunctor(parameters<NT, Point> &params_) : params(params_) {};
 
     // The index i represents the state vector index
-    NT operator() (Point const& x) const {
-      Point y = x - params.x0;
-      return params.a * y.dot(y);
+    Point operator() (Point const& x) const {
+        return (2.0 * params.a) * Point::all_ones(x.dimension());
     }
 
-  };
-
-  template
-<
-  typename Point
->
-struct HessianFunctor {
-  typedef typename Point::FT NT;
-
-  parameters<NT, Point> &params;
-
-  HessianFunctor(parameters<NT, Point> &params_) : params(params_) {};
-
-  // The index i represents the state vector index
-  Point operator() (Point const& x) const {
-    return (2.0 * params.a) * Point::all_ones(x.dimension());
-  }
-
+    };
 };
 
+struct NonSphericalGaussianFunctor {
+    template <typename NT, typename Point>
+    struct parameters {
+        Point x0;
+        NT a;
+        NT eta;
+        unsigned int order;
+        NT L;
+        NT m;
+        NT kappa;
+        Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> inv_covariance_matrix;
+        parameters(Point x0_, NT a_, NT eta_, Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> inv_covariance_matrix_)
+            : x0(x0_), a(a_), eta(eta_), order(2),
+              L(a_), m(a_), kappa(1),
+              inv_covariance_matrix(inv_covariance_matrix_) {};
+    };
+
+    template <typename Point>
+    struct GradientFunctor {
+        typedef typename Point::FT NT;
+        typedef std::vector<Point> pts;
+        parameters<NT, Point>& params;
+        GradientFunctor(parameters<NT, Point>& params_) : params(params_) {};
+        Point operator()(unsigned int const& i, pts const& xs, NT const& t) const {
+            if (i == params.order - 1) {
+                Point y = xs[0] - params.x0;
+                Eigen::Matrix<NT, Eigen::Dynamic, 1> result = -2.0 * params.a * params.inv_covariance_matrix * y.getCoefficients();
+                return Point(result);
+            } else {
+                return xs[i + 1];
+            }
+        }
+        Point operator()(Point const& x) {
+            Point y = x - params.x0;
+            Eigen::Matrix<NT, Eigen::Dynamic, 1> result = -2.0 * params.a * params.inv_covariance_matrix * y.getCoefficients();
+            return Point(result);
+        }
+    };
+
+    template <typename Point>
+    struct FunctionFunctor {
+        typedef typename Point::FT NT;
+        parameters<NT, Point>& params;
+        FunctionFunctor(parameters<NT, Point>& params_) : params(params_) {};
+        NT operator()(Point const& x) const {
+            Point y = x - params.x0;
+            Eigen::Matrix<NT, Eigen::Dynamic, 1> y_coeffs = y.getCoefficients();
+            return params.a * y_coeffs.dot(params.inv_covariance_matrix * y_coeffs);
+        }
+    };
+
+    template <typename Point>
+    struct HessianFunctor {
+        typedef typename Point::FT NT;
+        parameters<NT, Point>& params;
+        HessianFunctor(parameters<NT, Point>& params_) : params(params_) {};
+        Point operator()(Point const& x) const {
+            Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> result = 2.0 * params.a * params.inv_covariance_matrix;
+            return Point(result);
+        }
+    };
 };
 
 #endif

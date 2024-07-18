@@ -116,13 +116,13 @@ public:
 
             if (_inner_ball.second <= NT(0)) {
 
-                NT const tol = 1e-08;
-                std::tuple<VT, NT, bool> inner_ball = max_inscribed_ball(A, b, 5000, tol);
+                NT const tol = 0.00000001;
+                std::tuple<VT, NT, bool> inner_ball = max_inscribed_ball(A, b, 150, tol);
 
                 // check if the solution is feasible
-                if (is_in(Point(std::get<0>(inner_ball))) == 0 || std::get<1>(inner_ball) < tol/2.0 ||
+                if (is_in(Point(std::get<0>(inner_ball))) == 0 || std::get<1>(inner_ball) < NT(0) ||
                     std::isnan(std::get<1>(inner_ball)) || std::isinf(std::get<1>(inner_ball)) ||
-                    is_inner_point_nan_inf(std::get<0>(inner_ball)))
+                    !std::get<2>(inner_ball) || is_inner_point_nan_inf(std::get<0>(inner_ball)))
                 {
                     _inner_ball.second = -1.0;
                 } else
@@ -750,20 +750,22 @@ public:
     }
 
 
-    // Boundary oracle for exact hmc spherical gaussian sampling
+    //------------oracle for exact hmc spherical gaussian sampling---------------//
+
     // compute intersection point of ray starting from r and pointing to v
-    // with polytope discribed by A and b (the ray describes a curve)
+    // with polytope discribed by A and b
     std::pair<NT, int> trigonometric_positive_intersect(Point const& r, Point const& v,
                                                         NT const& omega, int &facet_prev) const
     {
-        constexpr NT pi_2 = NT(2.0) * M_PI;
-        NT t = std::numeric_limits<NT>::max();
 
-        int m = num_of_hyperplanes();
-        int facet = -1;
+        NT lamda = 0, C, Phi, t1, t2, tmin;
+        NT min_plus = std::numeric_limits<NT>::max(), t = std::numeric_limits<NT>::max();
+        NT max_minus = std::numeric_limits<NT>::lowest();
+        VT sum_nom, sum_denom;
+        unsigned int j;
+        int m = num_of_hyperplanes(), facet = -1;
 
-        VT sum_nom;
-        VT sum_denom;
+
         sum_nom.noalias() = A * r.getCoefficients();
         sum_denom.noalias() = A * v.getCoefficients();
 
@@ -771,15 +773,10 @@ public:
         NT* sum_denom_data = sum_denom.data();
         const NT* b_data = b.data();
 
-        const NT omega_sqr = omega * omega;
-        const NT pi_2_omega = pi_2 / omega;
-
         for (int i = 0; i < m; i++) {
 
-            NT C = std::sqrt((*sum_nom_data) * (*sum_nom_data) + ((*sum_denom_data) * (*sum_denom_data))
-              / omega_sqr);
-            NT Phi = std::atan((-(*sum_denom_data)) / ((*sum_nom_data) * omega));
-
+            C = std::sqrt((*sum_nom_data) * (*sum_nom_data) + ((*sum_denom_data) * (*sum_denom_data)) / (omega * omega));
+            Phi = std::atan((-(*sum_denom_data)) / ((*sum_nom_data) * omega));
             if ((*sum_denom_data) < 0.0 && Phi < 0.0) {
                 Phi += M_PI;
             } else if ((*sum_denom_data) > 0.0 && Phi > 0.0) {
@@ -788,20 +785,20 @@ public:
 
             if (C > (*b_data)) {
                 NT acos_b = std::acos((*b_data) / C);
-                NT t1 = (acos_b - Phi) / omega;
+                t1 = (acos_b - Phi) / omega;
                 if (facet_prev == i && std::abs(t1) < 1e-10){
-                    t1 = pi_2_omega;
+                    t1 = (2.0 * M_PI) / omega;
                 }
 
-                NT t2 = (-acos_b - Phi) / omega;
+                t2 = (-acos_b - Phi) / omega;
                 if (facet_prev == i && std::abs(t2) < 1e-10){
-                    t2 = pi_2_omega;
+                    t2 = (2.0 * M_PI) / omega;
                 }
 
-                t1 += (t1 < NT(0)) ? pi_2_omega : NT(0);
-                t2 += (t2 < NT(0)) ? pi_2_omega : NT(0);
+                t1 += (t1 < NT(0)) ? (2.0 * M_PI) / omega : NT(0);
+                t2 += (t2 < NT(0)) ? (2.0 * M_PI) / omega : NT(0);
 
-                NT tmin = std::min(t1, t2);
+                tmin = std::min(t1, t2);
 
                 if (tmin < t && tmin > NT(0)) {
                     facet = i;
@@ -842,6 +839,19 @@ public:
         for ( ; disit!=dists.end(); disit++, i++)
             *disit = b(i) / A.row(i).norm();
 
+        return dists;
+    }
+        
+    std::vector<Eigen::Matrix<NT, Eigen::Dynamic, 1>> get_dists() const
+    {
+        std::vector<Eigen::Matrix<NT, Eigen::Dynamic, 1>> dists;
+        dists.reserve(num_of_hyperplanes());
+        for (unsigned int i = 0; i < num_of_hyperplanes(); ++i)
+        {
+            NT norm = A.row(i).norm();
+            Eigen::Matrix<NT, Eigen::Dynamic, 1> dist_vector = (b(i) / norm) * (A.row(i) / norm);
+            dists.push_back(std::move(dist_vector));
+        }
         return dists;
     }
 
