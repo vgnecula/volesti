@@ -1,7 +1,12 @@
 # VolEsti (volume computation and sampling library)
-# Copyright (c) 2012-2021 Vissarion Fisikopoulos
-# Copyright (c) 2018-2021 Apostolos Chalkis
-# Contributed and/or modified by Ioannis Iakovidis
+
+# Copyright (c) 2012-2024 Vissarion Fisikopoulos
+# Copyright (c) 2018-2024 Apostolos Chalkis
+# Copyright (c) 2024 Vladimir Necula
+
+# Contributed and/or modified by Vladimir Necula, as part of Google Summer of
+# Code 2024 program.
+
 # Licensed under GNU LGPL.3, see LICENCE file
 
 project( VolEsti )

@@ -15,7 +15,7 @@ NT eval_exp(Point const& p, MT const& inv_covariance_matrix, NT const& a_next, N
 {
     Eigen::Matrix<NT, Eigen::Dynamic, 1> dist_vector = p.getCoefficients();
     NT mahalanobis_dist = dist_vector.transpose() * inv_covariance_matrix * dist_vector;
-    NT log_ratio = (a_next - a_curr) * mahalanobis_dist;
+    NT log_ratio = (a_curr - a_next) * mahalanobis_dist;
     return std::exp(log_ratio);
 }
 

@@ -1,6 +1,17 @@
+// VolEsti (volume computation and sampling library)
+
+// Copyright (c) 2012-2024 Vissarion Fisikopoulos
+// Copyright (c) 2018-2024 Apostolos Chalkis
+// Copyright (c) 2024 Vladimir Necula
+
+// Contributed and/or modified by Vladimir Necula, as part of Google Summer of
+// Code 2024 program.
+
+// Licensed under GNU LGPL.3, see LICENCE file
+
 #include "generators/known_polytope_generators.h"
 #include "random_walks/random_walks.hpp"
-#include "volume/volume_cooling_nonspherical_gaussians.hpp"
+#include "volume/volume_cooling_nonspherical_gaussians_crhmc.hpp"
 #include <iostream>
 #include <fstream>
 #include "misc/misc.h"
