@@ -12,7 +12,7 @@
 #ifndef VOLUME_COOLING_NON_SPHERICAL_GAUSSIANS_CRHMC_HPP
 #define VOLUME_COOLING_NON_SPHERICAL_GAUSSIANS_CRHMC_HPP
 
-// #define VOLESTI_DEBUG
+#define VOLESTI_DEBUG
 
 #include "volume/volume_cooling_gaussians.hpp"
 #include "preprocess/crhmc/crhmc_problem.h"
@@ -22,72 +22,6 @@
 ////////////////////////////// Algorithms
 
 // Gaussian Anealling
-
-// Compute the first variance a_0 for the starting gaussian
-template <typename Polytope, typename NT, typename MT>
-void get_first_gaussian(Polytope& P,
-                        NT const& frac,
-                        NT const& error,
-                        MT const& inv_covariance_matrix,
-                        std::vector<NT>& a_vals)
-{
-    NT tol = std::is_same<float, NT>::value ? 0.001 : 0.0000001;
-    std::vector<Eigen::Matrix<NT, Eigen::Dynamic, 1>> dists = P.get_dists();
-    NT lower = 0.0;
-    NT upper = 1.0;
-
-    // Compute an upper bound for a_0
-    unsigned int i;
-    const unsigned int maxiter = 10000;
-    for (i = 1; i <= maxiter; ++i)
-    {
-        NT sum = 0.0;
-        for (const auto& dist_vector : dists)
-        {
-            MT scaled_inv_covariance = upper * inv_covariance_matrix;
-            NT mahalanobis_dist = std::sqrt(dist_vector.transpose() * scaled_inv_covariance * dist_vector);
-            sum += std::exp(-0.5 * std::pow(mahalanobis_dist, 2.0))
-                   / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(scaled_inv_covariance.determinant()));
-        }
-        if (sum > frac * error)
-        {
-            upper *= 10;
-        } else {
-            break;
-        }
-    }
-
-    if (i == maxiter) {
-#ifdef VOLESTI_DEBUG
-        std::cout << "Cannot obtain sharp enough starting Gaussian" << std::endl;
-#endif
-        return;
-    }
-
-    // get a_0 with binary search
-    while (upper - lower > tol) {
-        NT mid = (upper + lower) / 2.0;
-        NT sum = 0.0;
-        for (const auto& dist_vector : dists)
-        {
-            MT scaled_inv_covariance = mid * inv_covariance_matrix;
-            NT mahalanobis_dist = std::sqrt(dist_vector.transpose() * scaled_inv_covariance * dist_vector);
-            sum += std::exp(-0.5 * std::pow(mahalanobis_dist, 2.0))
-                   / (std::pow(2.0 * M_PI, P.dimension() / 2.0) * std::sqrt(scaled_inv_covariance.determinant()));
-        }
-        if (sum < frac * error)
-        {
-            upper = mid;
-        }
-        else {
-            lower = mid;
-        }
-    }
-
-    NT a_0 = (upper + lower) / NT(2.0);
-    a_vals.push_back(a_0);;
-}
-
 
 // Compute a_{i+1} when a_i is given
 template
@@ -214,9 +148,10 @@ void compute_annealing_schedule(Polytope& P,
     typedef CrhmcRandomPointGenerator<CRHMCWalkType> CRHMCRandomPointGenerator;
 
 
-    // Compute the first gaussian
-    // This uses the function from the standard volume_cooling_gaussians.hpp
-    get_first_gaussian(P, frac, error, inv_covariance_matrix, a_vals);
+    // compute the first variance
+    auto ball = P.ComputeInnerBall();
+    P.shift(ball.first.getCoefficients()); // when using max_ellipsoid for rounding this center is the origin, but if we use other covariances this is different than the origin
+    get_first_gaussian(P, frac, ball.second, error, a_vals); // the function included from volume_cooling_gaussians.hpp (spherical gaussians)
 
 #ifdef VOLESTI_DEBUG
     std::cout << "first gaussian computed " << a_vals[0] << std::endl;
@@ -372,6 +307,10 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
 
     typedef CrhmcRandomPointGenerator<CRHMCWalkType> RandomPointGenerator;
 
+#ifdef VOLESTI_DEBUG
+        std::cout << "Entered Function " << std::endl; 
+#endif
+
     auto P(Pin); //copy and work with P because we are going to shift
     unsigned int n = P.dimension();
     unsigned int m = P.num_of_hyperplanes();
@@ -380,32 +319,49 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     MT A = P.get_mat();
     VT b = P.get_vec();
 
+#ifdef VOLESTI_DEBUG
+        std::cout << "After A and b" << std::endl; 
+        std::cout << "MT \n" <<A << std::endl; 
+        std::cout << "VT \n" <<b << std::endl; 
+#endif
+
     // get the inverse covariance matrix of themax inscribed ellipsoid
     Point q(P.dimension());
+
     NT tol = std::pow(10, -6.0), reg = std::pow(10, -4.0);
     VT x0 = q.getCoefficients();
     unsigned int maxiter = 100;
-    auto ellipsoid_result = max_inscribed_ellipsoid<MT>(A, b, x0, maxiter, tol, reg);
+
+    auto ellipsoid_result = max_inscribed_ellipsoid<MT>(P.get_mat(), P.get_vec(), x0, maxiter, tol, reg);
 
     // Extract the covariance matrix and center of the ellipsoid
-    MT inv_covariance_matrix = std::get<0>(ellipsoid_result);
-    Point center(std::get<1>(ellipsoid_result));
-
+    MT inv_covariance_matrix = std::get<0>(ellipsoid_result); //this is the covariance to use in the telescopic product
+    VT center = std::get<1>(ellipsoid_result);
+    MT covariance_matrix = inv_covariance_matrix.inverse(); 
 
 #ifdef VOLESTI_DEBUG
-    std::cout<<"\n\nExtracted the covariance matrix...\n"<<std::endl;
-    std::cout<< inv_covariance_matrix <<std::endl;
+        std::cout << "For the ellipsoid " << std::endl;
+        std::cout << "Inverse covariance matrix \n" << inv_covariance_matrix << std::endl;
+        std::cout << "Covariance matrix \n" << covariance_matrix << std::endl;
+        std::cout << "Center \n" << center << std::endl;
 #endif
 
-    // do the polytope rounding
-    auto rounding_result = inscribed_ellipsoid_rounding<MT, VT, NT>(P, center);
-    MT T = std::get<0>(rounding_result);
-    VT shift = std::get<1>(rounding_result);
-    NT round_val = std::get<2>(rounding_result);
 
-    // Modify P
-    P.shift(shift);
-    P.linear_transformIt(T);
+    Pin.shift(center); //we shift the initial polytope so that the origin is the center of the gaussians
+
+    // we apply the rounding transformation
+    P.shift(center);
+    Eigen::LLT<MT> lltOfA(covariance_matrix);
+    auto L = lltOfA.matrixL();
+    P.linear_transformIt(L);
+
+#ifdef VOLESTI_DEBUG
+        std::cout << "For rounding " << std::endl;
+        std::cout << "New A \n" << P.get_mat() << std::endl;
+        std::cout << "New b \n" << P.get_vec() << std::endl;    
+
+#endif
+
 
     // Initialize the gaussian_annealing_parameters struct
     non_gaussian_annealing_parameters<NT> parameters(P.dimension());

@@ -122,25 +122,15 @@ std::tuple<MT_dense, VT, bool> max_inscribed_ellipsoid(MT A, VT b, VT const& x0,
         objval = logdetE2; //logdet of E2 is already divided by 2
 
         if (i % 10 == 0) {
-            
             NT rel, Rel;
             
-            // computing eigenvalues of E2
-            auto op = get_mat_prod_op<NT>(E2);
-            auto eigs = get_eigs_solver<NT>(op, n);
-            eigs->init();
-            int nconv = eigs->compute();
-            if (eigs->info() == Spectra::COMPUTATION_INFO::SUCCESSFUL) {
-                Rel = 1.0 / eigs->eigenvalues().coeff(1);
-                rel = 1.0 / eigs->eigenvalues().coeff(0);
+            // Compute eigenvalues using Eigen
+            Eigen::SelfAdjointEigenSolver<MT> eigensolver(E2); // E2 is positive definite matrix
+            if (eigensolver.info() == Eigen::ComputationInfo::Success) {
+                Rel = 1.0 / eigensolver.eigenvalues().coeff(0);
+                rel = 1.0 / eigensolver.eigenvalues().template tail<1>().value();
             } else {
-                Eigen::SelfAdjointEigenSolver<MT> eigensolver(E2); // E2 is positive definite matrix
-                if (eigensolver.info() == Eigen::ComputationInfo::Success) {
-                    Rel = 1.0 / eigensolver.eigenvalues().coeff(0);
-                    rel = 1.0 / eigensolver.eigenvalues().template tail<1>().value();
-                } else {
-                    std::runtime_error("Computations failed.");
-                }
+                std::runtime_error("Computations failed.");
             }
 
             if (std::abs((last_r1 - r1) / std::min(NT(std::abs(last_r1)), NT(std::abs(r1)))) < 0.01 &&
