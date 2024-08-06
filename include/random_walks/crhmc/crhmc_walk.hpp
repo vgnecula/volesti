@@ -187,7 +187,7 @@ struct CRHMCWalk {
 #ifdef TIME_KEEPING
         start = std::chrono::system_clock::now();
 #endif
-        
+
         // Calculate initial Hamiltonian
         H = solver->ham.hamiltonian(x, v);
 
