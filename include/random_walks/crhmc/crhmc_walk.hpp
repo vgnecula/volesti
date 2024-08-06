@@ -132,8 +132,10 @@ struct CRHMCWalk {
       accepted = false;
       // Initialize solver
       solver = std::unique_ptr<Solver>(new Solver(0.0, params.eta, {x, x}, F, Problem, params.options));
+      
       v = MT::Zero(dim, simdLen);
       module_update = std::unique_ptr<auto_tuner<Sampler, RandomNumberGenerator>>(new auto_tuner<Sampler, RandomNumberGenerator>(*this));
+      
       update_modules = params.options.DynamicWeight ||
                        params.options.DynamicRegularizer ||
                        params.options.DynamicStepSize;
@@ -164,6 +166,9 @@ struct CRHMCWalk {
     inline void disable_adaptive(){
       update_modules=false;
     }
+    NT get_current_eta() const {
+        return solver->get_eta();
+    }
     inline void apply(RandomNumberGenerator &rng,
       int walk_length = 1,
       bool metropolis_filter = true)
@@ -177,10 +182,12 @@ struct CRHMCWalk {
       solver->steps(walk_length, accepted);
       x_tilde = solver->get_state(0);
       v_tilde = solver->get_state(1);
+
       if (metropolis_filter) {
 #ifdef TIME_KEEPING
         start = std::chrono::system_clock::now();
 #endif
+        
         // Calculate initial Hamiltonian
         H = solver->ham.hamiltonian(x, v);
 
@@ -210,6 +217,7 @@ struct CRHMCWalk {
         total_discarded_samples += simdLen - accept.sum();
         discard_ratio = (1.0 * total_discarded_samples) / (num_runs * simdLen);
         average_acceptance_prob = total_acceptance_prob / (num_runs * simdLen);
+
       } else {
         x = x_tilde;
         v = v_tilde;

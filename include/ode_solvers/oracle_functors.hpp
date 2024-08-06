@@ -317,7 +317,7 @@ struct GaussianFunctor {
     struct parameters {
         Point x0;
         NT a;
-        NT eta;
+        NT eta; 
         unsigned int order;
         NT L; // Lipschitz constant for gradient
         NT m; // Strong convexity constant
@@ -408,6 +408,20 @@ struct NonSphericalGaussianFunctor {
             : x0(x0_), a(a_), eta(eta_), order(2),
               L(a_), m(a_), kappa(1),
               inv_covariance_matrix(inv_covariance_matrix_) {};
+    
+        // Function to print parameters
+        void printParameters() const {
+            std::cout << "x0: " << std::endl;
+            x0.print();
+            std::cout << "a: " << a << std::endl;
+            std::cout << "eta: " << eta << std::endl;
+            std::cout << "order: " << order << std::endl;
+            std::cout << "L: " << L << std::endl;
+            std::cout << "m: " << m << std::endl;
+            std::cout << "kappa: " << kappa << std::endl;
+            std::cout << "inv_covariance_matrix:\n" << inv_covariance_matrix << std::endl;
+        }
+    
     };
 
     template <typename Point>
@@ -450,7 +464,7 @@ struct NonSphericalGaussianFunctor {
         parameters<NT, Point>& params;
         HessianFunctor(parameters<NT, Point>& params_) : params(params_) {};
         Point operator()(Point const& x) const {
-            Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> result = 2.0 * params.a * params.inv_covariance_matrix;
+            Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> result =   2.0 * params.a *  params.inv_covariance_matrix;
             return Point(result);
         }
     };

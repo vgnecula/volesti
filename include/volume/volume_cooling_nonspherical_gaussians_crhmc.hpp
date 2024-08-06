@@ -66,8 +66,10 @@ NT get_next_gaussian(Polytope& P,
     bool raw_output = false;
     typedef CrhmcRandomPointGenerator<CRHMCWalkType> CRHMCRandomPointGenerator;
 
+    std::cout << "Before " << crhmc_walk.get_current_eta() << "\n";
     CRHMCRandomPointGenerator::apply(problem, p, N, walk_length, randPoints,
                                     push_back_policy, rng, g, f, parameters, crhmc_walk, simdLen, raw_output);
+    std::cout << "After " << crhmc_walk.get_current_eta() << "\n";
 
     while (!done) {
         NT new_a = last_a * std::pow(ratio, k);
@@ -78,7 +80,6 @@ NT get_next_gaussian(Polytope& P,
         }
 
         std::pair<NT, NT> mv = get_mean_variance(fn);
-
 
         // Compute a_{i+1}
         if (mv.second / (mv.first * mv.first) >= C || mv.first / last_ratio < 1.0 + tol) {
@@ -95,6 +96,40 @@ NT get_next_gaussian(Polytope& P,
 
     // Return the new a value as a scalar
     return last_a * std::pow(ratio, k);
+}
+
+template
+<
+    typename CRHMCWalkType,
+    typename crhmc_walk_params,
+    int simdLen,
+    typename Grad,
+    typename Func,
+    typename CrhmcProblem,
+    typename Point,
+    typename NT,
+    typename RandomNumberGenerator
+>
+void burnIn(Point &p,
+            const unsigned int& walk_length,
+            RandomNumberGenerator& rng,
+            Grad& g,
+            Func& f,
+            crhmc_walk_params& parameters,
+            CrhmcProblem& problem,
+            CRHMCWalkType& crhmc_walk,
+            NT burnIn_sample) 
+{
+    std::list<Point> randPoints;
+
+    // burnIn
+    PushBackWalkPolicy push_back_policy;
+    bool raw_output = false;
+    typedef CrhmcRandomPointGenerator<CRHMCWalkType> CRHMCRandomPointGenerator;
+
+    CRHMCRandomPointGenerator::apply(problem, p, burnIn_sample, walk_length, randPoints,
+                                    push_back_policy, rng, g, f, parameters, crhmc_walk, simdLen, raw_output);
+
 }
 
 
@@ -115,7 +150,8 @@ void compute_annealing_schedule(Polytope& P,
                                 NT const& error,
                                 std::vector<NT>& a_vals,
                                 MT const& inv_covariance_matrix,
-                                RandomNumberGenerator& rng) 
+                                RandomNumberGenerator& rng,
+                                NT& initial_eta) 
 {
     typedef typename Polytope::PointType Point;
     
@@ -124,7 +160,9 @@ void compute_annealing_schedule(Polytope& P,
     typedef typename NonSphericalGaussianFunctor::HessianFunctor<Point>     Hess;
     typedef typename NonSphericalGaussianFunctor::parameters<NT, Point>     func_params;
 
-    typedef crhmc_input<MT, Point, Func, Grad, Hess> Input;
+    typedef crhmc_input<MT, Point, Func, Grad, ZeroFunctor<Point>> Input;
+    //typedef crhmc_input<MT, Point, Func, Grad, Hess> Input;
+
     typedef crhmc_problem<Point, Input> CrhmcProblem;   
 
     typedef ImplicitMidpointODESolver<Point, NT, CrhmcProblem, Grad, simdLen> Solver;
@@ -169,6 +207,29 @@ void compute_annealing_schedule(Polytope& P,
     std::cout << "Computing the sequence of gaussians..\n" << std::endl;
 #endif
 
+    int dimension = P.dimension();
+    func_params initial_f_params = func_params(Point(dimension), a_vals[0], -1, inv_covariance_matrix);
+    Func initial_f(initial_f_params);
+    Grad initial_g(initial_f_params);
+    Hess initial_h(initial_f_params);
+    ZeroFunctor<Point> zerof;
+    Input initial_input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(P, initial_f, initial_g, zerof);
+    CrhmcProblem initial_problem = CrhmcProblem(initial_input);
+    Point initial_p = Point(initial_problem.center);
+    initial_problem.options.simdLen = simdLen;
+    crhmc_walk_params initial_params(initial_input.df, initial_p.dimension(), initial_problem.options);
+    CRHMCWalkType initial_walk = CRHMCWalkType(initial_problem, initial_p, initial_input.df, initial_input.f, initial_params);
+
+    burnIn<CRHMCWalkType, crhmc_walk_params, simdLen, Grad, Func, CrhmcProblem>(
+        initial_p, walk_length, rng, initial_g, initial_f, initial_params, initial_problem, initial_walk, 80000);
+
+#ifdef VOLESTI_DEBUG
+std::cout << "Initial eta " << initial_walk.get_current_eta() << std::endl;
+#endif
+
+    //fix eta
+    initial_eta = initial_walk.get_current_eta();
+
     while (true) {
 
         
@@ -180,27 +241,34 @@ void compute_annealing_schedule(Polytope& P,
 
         // Create the CRHMC problem for this variance
         int dimension = P.dimension();
-        func_params f_params = func_params(Point(dimension), a_vals[it], 1, inv_covariance_matrix);
-        
+        func_params f_params = func_params(Point(dimension), a_vals[it], -1, inv_covariance_matrix);
+
         Func f(f_params);
         Grad g(f_params);
         Hess h(f_params);
-        
-        Input input = convert2crhmc_input<Input, Polytope, Func, Grad, Hess>(P, f, g, h);
-        
+
+        ZeroFunctor<Point> zerof;
+
+        Input input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(P, f, g, zerof);
+
+        //Input input = convert2crhmc_input<Input, Polytope, Func, Grad, Hess>(P, f, g, h);
+
         typedef crhmc_problem<Point, Input> CrhmcProblem;
+        
+
         CrhmcProblem problem = CrhmcProblem(input);
-        
+
         Point p = Point(problem.center);
-        
+
         if(problem.terminate) { return; }
-        
+
         problem.options.simdLen = simdLen;
+
         crhmc_walk_params params(input.df, p.dimension(), problem.options);
-        
-        if (input.df.params.eta > 0) {
-            params.eta = input.df.params.eta;
-        }
+
+        //eta reinitialization
+        problem.options.etaInitialize = false;
+        params.eta = initial_eta;
 
         // Create the walk object for this problem
         CRHMCWalkType walk = CRHMCWalkType(problem, p, input.df, input.f, params);
@@ -216,7 +284,7 @@ std::cout << "Next Gaussian " << next_a << std::endl;
         // Compute some ratios to decide if this is the last gaussian
         for (unsigned int j = 0; j < steps; j++) 
         {
-            walk.template apply(rng, walk_length);
+            walk.apply(rng, walk_length);
             p = walk.getPoint();
             curr_its += 1.0;    
             curr_fn += eval_exp(p, inv_covariance_matrix, next_a, a_vals[it]);
@@ -284,7 +352,8 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     typedef typename NonSphericalGaussianFunctor::HessianFunctor<Point>     Hess;
     typedef typename NonSphericalGaussianFunctor::parameters<NT, Point>     func_params;
 
-    typedef crhmc_input<MT, Point, Func, Grad, Hess> Input;
+    typedef crhmc_input<MT, Point, Func, Grad, ZeroFunctor<Point>> Input;
+    //typedef crhmc_input<MT, Point, Func, Grad, Hess> Input;   
     typedef crhmc_problem<Point, Input> CrhmcProblem;   
 
     typedef ImplicitMidpointODESolver<Point, NT, CrhmcProblem, Grad, simdLen> Solver;
@@ -304,8 +373,6 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
                   NT,
                   Grad
           > crhmc_walk_params;
-
-    typedef CrhmcRandomPointGenerator<CRHMCWalkType> RandomPointGenerator;
 
 #ifdef VOLESTI_DEBUG
         std::cout << "Entered Function " << std::endl; 
@@ -379,8 +446,14 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     NT C = parameters.C;
     unsigned int N = parameters.N;
 
-    compute_annealing_schedule<simdLen>(P, ratio, C, parameters.frac, N, walk_length, error, a_vals, inv_covariance_matrix, rng);
+    //initialization of eta
+    NT initial_eta;
 
+    compute_annealing_schedule<simdLen>(P, ratio, C, parameters.frac, N, walk_length, error, a_vals, inv_covariance_matrix, rng, initial_eta);
+
+#ifdef VOLESTI_DEBUG
+    std::cout << "Initial eta " << initial_eta << std::endl;
+#endif
 
 #ifdef VOLESTI_DEBUG
     std::cout<<"All the variances of schedule_annealing computed in = "
@@ -435,14 +508,18 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
         // Set the radius for the ball walk
         //creating the walk object
         int dimension = P.dimension();
-        func_params f_params = func_params(Point(dimension), *avalsIt, 1, inv_covariance_matrix);
-        
+        func_params f_params = func_params(Point(dimension), *avalsIt, -1, inv_covariance_matrix);
+
         Func f(f_params);
         Grad g(f_params);
         Hess h(f_params);
 
+        ZeroFunctor<Point> zerof;
+
         //create the crhmc problem
-        Input input = convert2crhmc_input<Input, Polytope, Func, Grad, Hess>(P, f, g, h);
+        Input input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(P, f, g, zerof);
+        //Input input = convert2crhmc_input<Input, Polytope, Func, Grad, Hess>(P, f, g, h);
+
 
         typedef crhmc_problem<Point, Input> CrhmcProblem;
         CrhmcProblem problem = CrhmcProblem(input);
@@ -454,15 +531,16 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
         problem.options.simdLen=simdLen;
         crhmc_walk_params params(input.df, p.dimension(), problem.options);
 
-        if (input.df.params.eta > 0) {
-            params.eta = input.df.params.eta;
-        }
+        //eta reinitialization
+        problem.options.etaInitialize = false;
+        params.eta = initial_eta;
 
         CRHMCWalkType walk = CRHMCWalkType(problem, p, input.df, input.f, params);
 
+
         while (!done || (*itsIt) < min_steps)
         {
-            walk.template apply(rng, walk_length);
+            walk.apply(rng, walk_length);
             p = walk.getPoint();
             *itsIt = *itsIt + 1.0;
             

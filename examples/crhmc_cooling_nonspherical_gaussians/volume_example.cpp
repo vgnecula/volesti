@@ -40,27 +40,10 @@ void calculateAndVerifyVolume(HPOLYTOPE& polytope) {
 int main() {
     // Set global seed
     boost::random::mt19937 global_gen(FIXED_SEED);
-
-    Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> A(5, 2);
-    Eigen::Matrix<NT, Eigen::Dynamic, 1> b(5);
-
-    A << 1.8339, 3.5784,
-        -2.2588, 2.7694,
-        0.8622, -1.3499,
-        -1.3077, 0.7254,
-        -0.4336, -0.0631;
-
-    b << 3.4903,
-        1.0752,
-        0.4714,
-        0.7534,
-        0.3853;
-
-    HPolytope<Point> Pin(2, A, b);
-    
-    Pin.print();
-
-    calculateAndVerifyVolume(Pin);
+    HPOLYTOPE cube = generate_cube<HPOLYTOPE>(4, false);
+    std::cout << std::endl << "Cube: " << std::endl;
+    cube.print();
+    calculateAndVerifyVolume(cube);
     
 
 /*   
@@ -89,5 +72,34 @@ int main() {
     cube.print();
     calculateAndVerifyVolume(cube);
 */
+
+/*
+
+// Set global seed
+    boost::random::mt19937 global_gen(FIXED_SEED);
+
+    Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> A(5, 2);
+    Eigen::Matrix<NT, Eigen::Dynamic, 1> b(5);
+
+    A << 1.8339, 3.5784,
+        -2.2588, 2.7694,
+        0.8622, -1.3499,
+        -1.3077, 0.7254,
+        -0.4336, -0.0631;
+
+    b << 3.4903,
+        1.0752,
+        0.4714,
+        0.7534,
+        0.3853;
+
+    HPolytope<Point> Pin(2, A, b);
+    
+    Pin.print();
+
+    calculateAndVerifyVolume(Pin);
+
+*/
+
     return 0;
 }
