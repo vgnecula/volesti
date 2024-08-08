@@ -26,80 +26,40 @@ typedef typename Kernel::Point Point;
 typedef BoostRandomNumberGenerator<boost::mt11213b, NT, FIXED_SEED> RandomNumberGenerator;
 typedef HPolytope<Point> HPOLYTOPE;
 
-void calculateAndVerifyVolume(HPOLYTOPE& polytope) {
+NT calculateAndVerifyVolume(HPOLYTOPE& polytope) {
 
     int walk_len = 10;
     NT e = 0.1;
     RandomNumberGenerator rng;
-    std::cout << "Before " << std::endl;
     NT volume = non_spherical_crhmc_volume_cooling_gaussians<HPOLYTOPE, RandomNumberGenerator>(polytope, rng, e, walk_len);
-    //NT volume = volume_cooling_gaussians<GaussianCDHRWalk,HPOLYTOPE, RandomNumberGenerator>(polytope, rng, e, walk_len);
-    std::cout << "Volume " << volume << std::endl;
+    return volume;
 }
 
 int main() {
-    // Set global seed
+
+
     boost::random::mt19937 global_gen(FIXED_SEED);
-    HPOLYTOPE cube = generate_cube<HPOLYTOPE>(4, false);
-    std::cout << std::endl << "Cube: " << std::endl;
-    cube.print();
-    calculateAndVerifyVolume(cube);
-    
 
-/*   
-    HPOLYTOPE cube = generate_cube<HPOLYTOPE>(4, false);
-    std::cout << std::endl << "Cube: " << std::endl;
-    cube.print();
-    calculateAndVerifyVolume(cube);
+    HPOLYTOPE cube10 = generate_cube<HPOLYTOPE>(10, false);
+    std::cout << "Cube10 \n";
+    std::cout << "Calculated Volume: " << calculateAndVerifyVolume(cube10) << "\n";
+    std::cout << "Expected Volume: " << std::pow(2, 10) << "\n\n";
 
-    HPOLYTOPE cross = generate_cross<HPOLYTOPE>(3, false);
-    std::cout << std::endl << "Cross: " << std::endl;
-    cross.print();
-    calculateAndVerifyVolume(cross);
-
-    HPOLYTOPE birkhoff = generate_birkhoff<HPOLYTOPE>(3);
-    std::cout << std::endl << "Birkhoff: " << std::endl;
-    birkhoff.print();
-    calculateAndVerifyVolume(birkhoff);
-
-    HPOLYTOPE simplex = generate_simplex<HPOLYTOPE>(2, false);
-    std::cout << std::endl << "Simplex: " << std::endl;
-    simplex.print();
-    calculateAndVerifyVolume(simplex);
-
-    HPOLYTOPE cube = generate_cube<HPOLYTOPE>(3, false);
-    std::cout << std::endl << "Cube: " << std::endl;
-    cube.print();
-    calculateAndVerifyVolume(cube);
-*/
+    HPOLYTOPE skinnycube10 = generate_skinny_cube<HPOLYTOPE>(10);
+    std::cout << "SkinnyCube10 \n";
+    std::cout << "Calculated Volume: " << calculateAndVerifyVolume(skinnycube10) << "\n";
+    std::cout << "Expected Volume: " << 200 * std::pow(2, 9) << "\n\n";
 
 /*
+    HPOLYTOPE cube50 = generate_cube<HPOLYTOPE>(50, false);
+    std::cout << "Cube50 \n";
+    std::cout << "Calculated Volume: " << calculateAndVerifyVolume(cube50) << "\n";
+    std::cout << "Expected Volume: " << std::pow(2, 50) << "\n\n";
 
-// Set global seed
-    boost::random::mt19937 global_gen(FIXED_SEED);
-
-    Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> A(5, 2);
-    Eigen::Matrix<NT, Eigen::Dynamic, 1> b(5);
-
-    A << 1.8339, 3.5784,
-        -2.2588, 2.7694,
-        0.8622, -1.3499,
-        -1.3077, 0.7254,
-        -0.4336, -0.0631;
-
-    b << 3.4903,
-        1.0752,
-        0.4714,
-        0.7534,
-        0.3853;
-
-    HPolytope<Point> Pin(2, A, b);
-    
-    Pin.print();
-
-    calculateAndVerifyVolume(Pin);
-
+    HPOLYTOPE skinnycube50 = generate_skinny_cube<HPOLYTOPE>(50);
+    std::cout << "SkinnyCube50 \n";
+    std::cout << "Calculated Volume: " << calculateAndVerifyVolume(skinnycube50) << "\n";
+    std::cout << "Expected Volume: " << 200 * std::pow(2, 49) << "\n\n";
 */
-
     return 0;
 }

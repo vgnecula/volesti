@@ -66,10 +66,8 @@ NT get_next_gaussian(Polytope& P,
     bool raw_output = false;
     typedef CrhmcRandomPointGenerator<CRHMCWalkType> CRHMCRandomPointGenerator;
 
-    std::cout << "Before " << crhmc_walk.get_current_eta() << "\n";
     CRHMCRandomPointGenerator::apply(problem, p, N, walk_length, randPoints,
                                     push_back_policy, rng, g, f, parameters, crhmc_walk, simdLen, raw_output);
-    std::cout << "After " << crhmc_walk.get_current_eta() << "\n";
 
     while (!done) {
         NT new_a = last_a * std::pow(ratio, k);
@@ -151,9 +149,7 @@ void compute_annealing_schedule(Polytope& P,
                                 NT const& error,
                                 std::vector<NT>& a_vals,
                                 MT const& inv_covariance_matrix,
-                                RandomNumberGenerator& rng,
-                                NT& initial_eta,
-                                Point& start_point) 
+                                RandomNumberGenerator& rng) 
 {
     
     typedef typename NonSphericalGaussianFunctor::FunctionFunctor<Point>    Func;
@@ -207,6 +203,8 @@ void compute_annealing_schedule(Polytope& P,
 #ifdef VOLESTI_DEBUG
     std::cout << "Computing the sequence of gaussians..\n" << std::endl;
 #endif
+    NT initial_eta;
+    Point start_point;
 
     int dimension = P.dimension();
     func_params initial_f_params = func_params(Point(dimension), a_vals[0], -1, inv_covariance_matrix);
@@ -222,14 +220,14 @@ void compute_annealing_schedule(Polytope& P,
     CRHMCWalkType initial_walk = CRHMCWalkType(initial_problem, initial_p, initial_input.df, initial_input.f, initial_params);
 
     burnIn<CRHMCWalkType, crhmc_walk_params, simdLen, Grad, Func, CrhmcProblem>(
-        initial_p, walk_length, rng, initial_g, initial_f, initial_params, initial_problem, initial_walk, 2500);
-
-#ifdef VOLESTI_DEBUG
-std::cout << "Initial eta " << initial_walk.get_current_eta() << std::endl;
-#endif
+        initial_p, walk_length, rng, initial_g, initial_f, initial_params, initial_problem, initial_walk, 2.5 * N);
 
     //fix eta
     initial_eta = initial_walk.get_current_eta();
+
+#ifdef VOLESTI_DEBUG
+    std::cout << "Initial eta (after the burnIn): " << initial_eta << "\n\n";
+#endif
 
     // fix point
     start_point = initial_problem.center;
@@ -274,12 +272,20 @@ std::cout << "Initial eta " << initial_walk.get_current_eta() << std::endl;
         // Create the walk object for this problem
         CRHMCWalkType walk = CRHMCWalkType(problem, start_point, input.df, input.f, params);
 
+#ifdef VOLESTI_DEBUG
+    std::cout << "Eta before the walk: " << initial_eta << "\n\n";
+#endif
+
         // Compute the next gaussian
         NT next_a = get_next_gaussian<CRHMCWalkType, crhmc_walk_params, simdLen, Grad, Func, CrhmcProblem>(
             P, start_point, a_vals[it], N, ratio, C, walk_length, rng, g, f, params, problem, walk, inv_covariance_matrix);
 
         //restore the new eta
         initial_eta = walk.get_current_eta();
+
+#ifdef VOLESTI_DEBUG
+    std::cout << "Eta after the walk: " << initial_eta << "\n\n";
+#endif
 
         start_point = walk.getPoint();
 
@@ -380,45 +386,21 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
                   Grad
           > crhmc_walk_params;
 
-#ifdef VOLESTI_DEBUG
-        std::cout << "Entered Function " << std::endl; 
-#endif
-
     auto P(Pin); //copy and work with P because we are going to shift
     unsigned int n = P.dimension();
     unsigned int m = P.num_of_hyperplanes();
     
-    // Get the matrix A and vector b of the polytope
-    MT A = P.get_mat();
-    VT b = P.get_vec();
-
-#ifdef VOLESTI_DEBUG
-        std::cout << "After A and b" << std::endl; 
-        std::cout << "MT \n" <<A << std::endl; 
-        std::cout << "VT \n" <<b << std::endl; 
-#endif
-
-    // get the inverse covariance matrix of themax inscribed ellipsoid
-    Point q(P.dimension());
-
+    //compute inscribed ellipsoid
     NT tol = std::pow(10, -6.0), reg = std::pow(10, -4.0);
-    VT x0 = q.getCoefficients();
     unsigned int maxiter = 100;
+    P.normalize();
+    VT x0 = compute_feasible_point(P.get_mat(), P.get_vec());
+    auto ellipsoid_result = compute_inscribed_ellipsoid<MT, EllipsoidType::MAX_ELLIPSOID>(P.get_mat(), P.get_vec(), x0, maxiter, tol, reg);
 
-    auto ellipsoid_result = max_inscribed_ellipsoid<MT>(P.get_mat(), P.get_vec(), x0, maxiter, tol, reg);
-
-    // Extract the covariance matrix and center of the ellipsoid
+    // extract the covariance matrix and the center of the ellipsoid
     MT inv_covariance_matrix = std::get<0>(ellipsoid_result); //this is the covariance to use in the telescopic product
     VT center = std::get<1>(ellipsoid_result);
     MT covariance_matrix = inv_covariance_matrix.inverse(); 
-
-#ifdef VOLESTI_DEBUG
-        std::cout << "For the ellipsoid " << std::endl;
-        std::cout << "Inverse covariance matrix \n" << inv_covariance_matrix << std::endl;
-        std::cout << "Covariance matrix \n" << covariance_matrix << std::endl;
-        std::cout << "Center \n" << center << std::endl;
-#endif
-
 
     Pin.shift(center); //we shift the initial polytope so that the origin is the center of the gaussians
 
@@ -427,14 +409,6 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     Eigen::LLT<MT> lltOfA(covariance_matrix);
     auto L = lltOfA.matrixL();
     P.linear_transformIt(L);
-
-#ifdef VOLESTI_DEBUG
-        std::cout << "For rounding " << std::endl;
-        std::cout << "New A \n" << P.get_mat() << std::endl;
-        std::cout << "New b \n" << P.get_vec() << std::endl;    
-
-#endif
-
 
     // Initialize the gaussian_annealing_parameters struct
     non_gaussian_annealing_parameters<NT> parameters(P.dimension());
@@ -452,15 +426,7 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     NT C = parameters.C;
     unsigned int N = parameters.N;
 
-    //initialization of eta
-    NT initial_eta;
-    Point initial_point;
-
-    compute_annealing_schedule<simdLen, Point>(P, ratio, C, parameters.frac, N, walk_length, error, a_vals, inv_covariance_matrix, rng, initial_eta, initial_point);
-
-#ifdef VOLESTI_DEBUG
-    std::cout << "Initial eta " << initial_eta << std::endl;
-#endif
+    compute_annealing_schedule<simdLen, Point>(P, ratio, C, parameters.frac, N, walk_length, error, a_vals, inv_covariance_matrix, rng);
 
 #ifdef VOLESTI_DEBUG
     std::cout<<"All the variances of schedule_annealing computed in = "
@@ -481,7 +447,9 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     VT lamdas;
     lamdas.setZero(m);
     
-    NT vol = std::pow(M_PI / a_vals[0], NT(n) / 2.0);
+    MT scaled_matrix = a_vals[0] * inv_covariance_matrix;
+    NT det_scaled = scaled_matrix.determinant();
+    NT vol = std::pow(M_PI, n / 2.0) / std::sqrt(det_scaled);
 
     unsigned int i=0;
 
@@ -496,8 +464,31 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     std::cout<<"computing ratios..\n"<<std::endl;
 #endif
 
-    //point initialization
-    Point p = initial_point;
+    int dimension = P.dimension();
+    func_params initial_f_params = func_params(Point(dimension), a_vals[0], -1, inv_covariance_matrix);
+    Func initial_f(initial_f_params);
+    Grad initial_g(initial_f_params);
+    Hess initial_h(initial_f_params);
+    ZeroFunctor<Point> zerof;
+    Input initial_input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(P, initial_f, initial_g, zerof);
+    CrhmcProblem initial_problem = CrhmcProblem(initial_input);
+    Point initial_p = Point(initial_problem.center);
+    initial_problem.options.simdLen = simdLen;
+    crhmc_walk_params initial_params(initial_input.df, initial_p.dimension(), initial_problem.options);
+    CRHMCWalkType initial_walk = CRHMCWalkType(initial_problem, initial_p, initial_input.df, initial_input.f, initial_params);
+
+    burnIn<CRHMCWalkType, crhmc_walk_params, simdLen, Grad, Func, CrhmcProblem>(
+        initial_p, walk_length, rng, initial_g, initial_f, initial_params, initial_problem, initial_walk, 2.5 * N);
+
+    //fix eta
+    NT initial_eta = initial_walk.get_current_eta();
+
+#ifdef VOLESTI_DEBUG
+    std::cout << "------- New Initial eta (after the burnIn): " << initial_eta << "\n\n";
+#endif
+
+    // fix point
+    Point p = initial_problem.center;
 
     //iterate over the number of ratios
     for (viterator fnIt = fn.begin();
@@ -543,6 +534,15 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
         problem.options.etaInitialize = false;
         params.eta = initial_eta;
 
+        /*
+        if(phaseOne)
+        {
+            p = problem.center;
+            phaseOne = false;
+        }
+        */
+
+        //each walk starts from the end of the other
         CRHMCWalkType walk = CRHMCWalkType(problem, p, input.df, input.f, params);
 
 
