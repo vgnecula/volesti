@@ -140,7 +140,8 @@ template<
     typename MT,
     typename RandomNumberGenerator
 >
-void compute_annealing_schedule(Polytope& P,
+void compute_annealing_schedule(Polytope& Pin,
+                                Polytope& P,
                                 NT const& ratio,
                                 NT const& C,
                                 NT const& frac,
@@ -184,6 +185,7 @@ void compute_annealing_schedule(Polytope& P,
 
 
     // compute the first variance
+    // for this we need P
     auto ball = P.ComputeInnerBall();
     P.shift(ball.first.getCoefficients()); // when using max_ellipsoid for rounding this center is the origin, but if we use other covariances this is different than the origin
     get_first_gaussian(P, frac, ball.second, error, a_vals); // the function included from volume_cooling_gaussians.hpp (spherical gaussians)
@@ -192,10 +194,11 @@ void compute_annealing_schedule(Polytope& P,
     std::cout << "first gaussian computed " << a_vals[0] << std::endl;
 #endif
 
+    //for the rest we need Pin
     NT a_stop = 0.0;
     const NT tol = 0.001;
     unsigned int it = 0;
-    unsigned int n = P.dimension();
+    unsigned int n = Pin.dimension();
     const unsigned int totalSteps = ((int)150/((1.0 - frac) * error)) + 1;
 
     if (a_vals[0]<a_stop) a_vals[0] = a_stop;
@@ -206,18 +209,19 @@ void compute_annealing_schedule(Polytope& P,
     NT initial_eta;
     Point start_point;
 
-    int dimension = P.dimension();
+    int dimension = Pin.dimension();
     func_params initial_f_params = func_params(Point(dimension), a_vals[0], -1, inv_covariance_matrix);
     Func initial_f(initial_f_params);
     Grad initial_g(initial_f_params);
     Hess initial_h(initial_f_params);
     ZeroFunctor<Point> zerof;
-    Input initial_input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(P, initial_f, initial_g, zerof);
+    Input initial_input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(Pin, initial_f, initial_g, zerof);
     CrhmcProblem initial_problem = CrhmcProblem(initial_input);
     Point initial_p = Point(initial_problem.center);
     initial_problem.options.simdLen = simdLen;
     crhmc_walk_params initial_params(initial_input.df, initial_p.dimension(), initial_problem.options);
     CRHMCWalkType initial_walk = CRHMCWalkType(initial_problem, initial_p, initial_input.df, initial_input.f, initial_params);
+
 
     burnIn<CRHMCWalkType, crhmc_walk_params, simdLen, Grad, Func, CrhmcProblem>(
         initial_p, walk_length, rng, initial_g, initial_f, initial_params, initial_problem, initial_walk, 2.5 * N);
@@ -242,7 +246,7 @@ void compute_annealing_schedule(Polytope& P,
         //TODO: potential problem creation and preprocessing optimization
 
         // Create the CRHMC problem for this variance
-        int dimension = P.dimension();
+        int dimension = Pin.dimension();
         func_params f_params = func_params(Point(dimension), a_vals[it], -1, inv_covariance_matrix);
 
         Func f(f_params);
@@ -251,15 +255,15 @@ void compute_annealing_schedule(Polytope& P,
 
         ZeroFunctor<Point> zerof;
 
-        Input input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(P, f, g, zerof);
+        Input input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(Pin, f, g, zerof);
 
         //Input input = convert2crhmc_input<Input, Polytope, Func, Grad, Hess>(P, f, g, h);
 
         typedef crhmc_problem<Point, Input> CrhmcProblem;
         
         CrhmcProblem problem = CrhmcProblem(input);
-        
-        if(problem.terminate) { return; }
+
+       if(problem.terminate) { return; }
 
         problem.options.simdLen = simdLen;
 
@@ -278,7 +282,7 @@ void compute_annealing_schedule(Polytope& P,
 
         // Compute the next gaussian
         NT next_a = get_next_gaussian<CRHMCWalkType, crhmc_walk_params, simdLen, Grad, Func, CrhmcProblem>(
-            P, start_point, a_vals[it], N, ratio, C, walk_length, rng, g, f, params, problem, walk, inv_covariance_matrix);
+            Pin, start_point, a_vals[it], N, ratio, C, walk_length, rng, g, f, params, problem, walk, inv_covariance_matrix);
 
         //restore the new eta
         initial_eta = walk.get_current_eta();
@@ -426,7 +430,7 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     NT C = parameters.C;
     unsigned int N = parameters.N;
 
-    compute_annealing_schedule<simdLen, Point>(P, ratio, C, parameters.frac, N, walk_length, error, a_vals, inv_covariance_matrix, rng);
+    compute_annealing_schedule<simdLen, Point>(Pin, P, ratio, C, parameters.frac, N, walk_length, error, a_vals, inv_covariance_matrix, rng);
 
 #ifdef VOLESTI_DEBUG
     std::cout<<"All the variances of schedule_annealing computed in = "
@@ -464,13 +468,13 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     std::cout<<"computing ratios..\n"<<std::endl;
 #endif
 
-    int dimension = P.dimension();
+    int dimension = Pin.dimension();
     func_params initial_f_params = func_params(Point(dimension), a_vals[0], -1, inv_covariance_matrix);
     Func initial_f(initial_f_params);
     Grad initial_g(initial_f_params);
     Hess initial_h(initial_f_params);
     ZeroFunctor<Point> zerof;
-    Input initial_input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(P, initial_f, initial_g, zerof);
+    Input initial_input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(Pin, initial_f, initial_g, zerof);
     CrhmcProblem initial_problem = CrhmcProblem(initial_input);
     Point initial_p = Point(initial_problem.center);
     initial_problem.options.simdLen = simdLen;
@@ -508,7 +512,7 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
 
         // Set the radius for the ball walk
         //creating the walk object
-        int dimension = P.dimension();
+        int dimension = Pin.dimension();
         func_params f_params = func_params(Point(dimension), *avalsIt, -1, inv_covariance_matrix);
 
         Func f(f_params);
@@ -518,7 +522,7 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
         ZeroFunctor<Point> zerof;
 
         //create the crhmc problem
-        Input input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(P, f, g, zerof);
+        Input input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(Pin, f, g, zerof);
         //Input input = convert2crhmc_input<Input, Polytope, Func, Grad, Hess>(P, f, g, h);
 
 
