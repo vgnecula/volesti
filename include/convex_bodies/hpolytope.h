@@ -818,7 +818,7 @@ public:
     // Apply linear transformation, of square matrix T^{-1}, in H-polytope P:= Ax<=b
     void linear_transformIt(MT const& T)
     {
-        A = A * T;
+        A = A * T;     
     }
 
 
@@ -826,6 +826,9 @@ public:
 
     void shift(const VT &c)
     {
+        std::cout << "\nThis is c\n" << c;
+        std::cout << "\n This is multy\n" << A*c;
+        
         b -= A*c;
     }
 

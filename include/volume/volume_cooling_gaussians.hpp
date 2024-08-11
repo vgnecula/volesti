@@ -57,12 +57,15 @@ struct update_delta<GaussianBallWalk::Walk<Polytope, RandomNumberGenerator>>
 
 // Compute the first variance a_0 for the starting gaussian
 template <typename Polytope, typename NT>
-void get_first_gaussian(Polytope& P,
+void get_first_gaussian(Polytope const& P_0,
                         NT const& frac,
                         NT const& chebychev_radius,
                         NT const& error,
                         std::vector<NT> & a_vals)
 {
+    auto P(P_0);
+    std::cout << "Nothing \n";
+    P.print();
     // if tol is smaller than 1e-6 no convergence can be obtained when float is used
     NT tol = std::is_same<float, NT>::value ? 0.001 : 0.0000001;
 

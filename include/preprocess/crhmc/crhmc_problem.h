@@ -402,43 +402,39 @@ public:
     return tau;
   }
 
-  template <typename StreamType>
-  void print(StreamType &stream, std::string const message = "Printing Sparse problem") {
-    stream << "----------------" << message << "--------------" << '\n';
-    stream << "(m,n) = " << equations() << " , " << dimension()
+  void print() {
+    std::cout << "--------------" << '\n';
+    std::cout << "(m,n) = " << equations() << " , " << dimension()
               << " nnz= " << Asp.nonZeros() << "\n";
-    if (equations() > 20 || dimension() > 20) {
-      stream << "too big for complete visulization\n";
-      return;
-    }
-    stream << "A=\n";
 
-    stream << MT(Asp);
-    stream << "\n";
+    std::cout << "A=\n";
 
-    stream << "b=\n";
-    stream << b;
-    stream << "\n";
+    std::cout << MT(Asp);
+    std::cout << "\n";
 
-    stream << "lb=\n";
-    stream << barrier.lb;
-    stream << "\n";
+    std::cout << "b=\n";
+    std::cout << b;
+    std::cout << "\n";
 
-    stream << "ub=\n";
-    stream << barrier.ub;
-    stream << "\n";
+    std::cout << "lb=\n";
+    std::cout << barrier.lb;
+    std::cout << "\n";
 
-    stream << "T=\n";
-    stream << MT(T);
-    stream << "\n";
+    std::cout << "ub=\n";
+    std::cout << barrier.ub;
+    std::cout << "\n";
 
-    stream << "y=\n";
-    stream << y;
-    stream << "\n";
+    std::cout << "T=\n";
+    std::cout << MT(T);
+    std::cout << "\n";
 
-    stream << "center=\n";
-    stream << center;
-    stream << "\n";
+    std::cout << "y=\n";
+    std::cout << y;
+    std::cout << "\n";
+
+    std::cout << "center=\n";
+    std::cout << center;
+    std::cout << "\n";
   }
 
     void make_format(Input const &input, MT const &S) {
@@ -554,6 +550,7 @@ public:
       isempty_center = false;
     }
     shift_barrier(center);
+
 #ifdef TIME_KEEPING
     end = std::chrono::system_clock::now();
     shift_barrier_duration += end - start;
@@ -566,8 +563,10 @@ public:
 #ifdef TIME_KEEPING
     start = std::chrono::system_clock::now();
 #endif
+
     std::tie(center, std::ignore, std::ignore, w_center) =
         lewis_center<Crhmc_problem, SpMat, Opts, MT, VT, NT>(Asp, b, *this, options, center);
+
     std::tie(std::ignore, hess) = lewis_center_oracle(center, w_center);
     CholObj solver = CholObj(transform_format<SpMat,NT,int>(Asp));
     solver.accuracyThreshold = 0;
@@ -577,10 +576,12 @@ public:
     VT input = (b - Asp * center);
     solver.solve((Tx *)input.data(), (Tx *)out.data());
     center = center + (Asp.transpose() * out).cwiseProduct(Hinv);
+
 #ifdef TIME_KEEPING
     end = std::chrono::system_clock::now();
     lewis_center_duration += end - start;
 #endif
+    // std::cout << "Center array " << center.array() << "\n\n"; 
     if ((center.array() > barrier.ub.array()).any() ||
         (center.array() < barrier.lb.array()).any()) {
       terminate = true;

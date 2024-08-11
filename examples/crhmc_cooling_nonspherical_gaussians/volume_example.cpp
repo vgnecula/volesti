@@ -45,12 +45,12 @@ int main() {
     std::cout << "Calculated Volume: " << calculateAndVerifyVolume(cube10) << "\n";
     std::cout << "Expected Volume: " << std::pow(2, 10) << "\n\n";
 
+/*
     HPOLYTOPE skinnycube10 = generate_skinny_cube<HPOLYTOPE>(10);
     std::cout << "SkinnyCube10 \n";
     std::cout << "Calculated Volume: " << calculateAndVerifyVolume(skinnycube10) << "\n";
     std::cout << "Expected Volume: " << 200 * std::pow(2, 9) << "\n\n";
 
-/*
     HPOLYTOPE cube50 = generate_cube<HPOLYTOPE>(50, false);
     std::cout << "Cube50 \n";
     std::cout << "Calculated Volume: " << calculateAndVerifyVolume(cube50) << "\n";
