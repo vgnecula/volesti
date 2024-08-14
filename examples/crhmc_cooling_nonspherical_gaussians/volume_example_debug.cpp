@@ -94,39 +94,9 @@ int main() {
     auto L = lltOfA.matrixL();
     P.linear_transformIt(L);
 
-        // Initialize the gaussian_annealing_parameters struct
-    non_gaussian_annealing_parameters<NT> parameters(P.dimension());
-
-    // Initialization for the schedule annealing
     std::vector<NT> a_vals;
-    NT ratio = parameters.ratio;
-    NT C = parameters.C;
-    unsigned int N = parameters.N;
+    a_vals.push_back(5.448);
 
-    auto ball = P.ComputeInnerBall();
-    P.shift(ball.first.getCoefficients()); // when using max_ellipsoid for rounding this center is the origin, but if we use other covariances this is different than the origin
-    get_first_gaussian(P, parameters.frac, ball.second, e, a_vals); // the function included from volume_cooling_gaussians.hpp (spherical gaussians)
-
-
-    NT a_stop = 0.0;
-
-    if (a_vals[0]<a_stop) a_vals[0] = a_stop;
-
-    NT initial_eta;
-    Point start_point;
-/*
-#ifdef VOLESTI_DEBUG
-    P_copy.print();
-    std::cout << "first \n";
-    P_copy.InnerBall().first.print();
-    std::cout << "second \n" << P_copy.InnerBall().second << "\n";
-    std::cout<<"-----------------------------------------------------\n\n";
-    Pin_copy.print();
-    std::cout << "first \n";
-    Pin_copy.InnerBall().first.print();
-    std::cout << "second \n" << Pin_copy.InnerBall().second << "\n";
-#endif
-*/
     int dimension = newPin.dimension();
     func_params initial_f_params = func_params(Point(dimension), a_vals[0], -1, inv_covariance_matrix);
     Func initial_f(initial_f_params);
