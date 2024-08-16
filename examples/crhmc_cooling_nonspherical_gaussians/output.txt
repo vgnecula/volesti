@@ -1,0 +1,80 @@
+Cube3 
+Calculated Volume With Gaussian CDHR: 
+
+Computing annealing...
+
+first gaussian computed
+
+Computing the sequence of gaussians..
+
+All the variances of schedule_annealing computed in = 0.010554 sec
+a_0 = 4.39157 a_1 = 1.95181 a_2 = 0 
+
+volume of the first gaussian = 0.605055
+
+computing ratios..
+
+ratio 0 = 2.99707 N_0 = 1479
+ratio 1 = 4.87376 N_1 = 1787
+
+Total number of steps = 3266
+
+8.83803
+Calculated Volume With CRHMC: 
+
+Computing annealing...
+
+first gaussian computed 4.39157
+Computing the sequence of gaussians..
+
+
+ Initial problem terminate Pin Copy: 0
+
+
+ Initial problem terminate P Copy: 0
+
+Initial eta (after the burnIn): 0.00540365
+
+While problem terminate: 0
+
+Eta before the walk: 0.00540365
+
+Eta after the walk: 0.00540365
+
+Next Gaussian 1.95181
+Ratio = 3.74976
+
+While problem terminate: 0
+
+Eta before the walk: 0.00540365
+
+Eta after the walk: 0.00189395
+
+Next Gaussian 4.52394e-06
+Ratio = 1.16059
+
+While problem terminate: 0
+
+Eta before the walk: 0.00189395
+
+Eta after the walk: 0.000663816
+
+Next Gaussian 3.01596e-06
+Ratio = 1
+
+All the variances of schedule_annealing computed in = 12.1983 sec
+a_0 = 4.39157 a_1 = 1.95181 a_2 = 0 
+
+volume of the first gaussian = 0.605055
+
+computing ratios..
+
+------- New Initial eta (after the burnIn): 0.00595842
+
+ratio 0 = 3.06529 N_0 = 6307
+ratio 1 = 1.57348 N_1 = 854
+
+Total number of steps = 7161
+
+2.91828
+Expected Volume: 8

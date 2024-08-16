@@ -65,12 +65,13 @@ std::tuple<VT, SpMat, VT, VT> lewis_center(SpMat const &A, VT const &b, Polytope
   CholObj solver = CholObj(transform_format<SpMat,NT,int>(A));
   VT w = VT::Ones(n, 1);
   VT wp = w;
+  NT cnt = 1;
   for (int iter = 0; iter < options.ipmMaxIter; iter++)
   {
-    std::pair<VT, VT> pair_analytic_oracle = f.lewis_center_oracle(x, wp);
+    std::pair<VT, VT> pair_analytic_oracle = f.lewis_center_oracle(x, wp, cnt);
+
     VT grad = pair_analytic_oracle.first;
     VT hess = pair_analytic_oracle.second;
-
     // compute the residual
     VT rx = lambda - grad;
     VT rs = b - A * x;
@@ -112,6 +113,7 @@ std::tuple<VT, SpMat, VT, VT> lewis_center(SpMat const &A, VT const &b, Polytope
 
     // compute the step size
     VT dx = dx1 + dx2;
+
     NT tGrad = std::min(f.barrier.step_size(x, dx), 1.0);
     dx = dx1 + tGrad * dx2;
     NT tConst = std::min(0.99 * f.barrier.step_size(x, dx), 1.0);
@@ -120,6 +122,24 @@ std::tuple<VT, SpMat, VT, VT> lewis_center(SpMat const &A, VT const &b, Polytope
     // make the step
     x = x + tConst * dx;
     lambda = lambda - dr2;
+
+    /*
+            if(cnt < 5) {
+    
+    std::cout <<  "dr1 \n" << dr1 << "\n";
+    std::cout <<  "dr2 \n" << dr2 << "\n";
+    std::cout <<  "rx \n" << rx << "\n";
+    std::cout <<  "lambda \n" << lambda << "\n";
+    std::cout <<  "dx1 \n" << dx1 << "\n";
+    std::cout <<  "dx2 \n" << dx2 << "\n";
+    std::cout <<  "tConst \n" << tConst << "\n";
+    std::cout <<  "dx \n" << dx << "\n";
+    std::cout << "xnew \n" << x << "\n";
+    cnt++;
+    }
+    */
+
+
 
     // update weight
     VT w_vector(n, 1);

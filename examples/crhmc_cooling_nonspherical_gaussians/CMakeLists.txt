@@ -128,5 +128,7 @@ else ()
 
   add_executable(volume_example volume_example.cpp)
   target_link_libraries(volume_example QD_LIB ${MKL_LINK} ${LP_SOLVE})
+  add_executable(volume_example_debug volume_example_debug.cpp)
+  target_link_libraries(volume_example_debug QD_LIB ${MKL_LINK} ${LP_SOLVE})
 
 endif()

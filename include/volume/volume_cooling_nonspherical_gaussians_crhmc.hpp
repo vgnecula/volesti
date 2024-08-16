@@ -12,7 +12,7 @@
 #ifndef VOLUME_COOLING_NON_SPHERICAL_GAUSSIANS_CRHMC_HPP
 #define VOLUME_COOLING_NON_SPHERICAL_GAUSSIANS_CRHMC_HPP
 
-#define VOLESTI_DEBUG
+//#define VOLESTI_DEBUG
 
 #include "volume/volume_cooling_gaussians.hpp"
 #include "preprocess/crhmc/crhmc_problem.h"
@@ -238,7 +238,6 @@ void compute_annealing_schedule(Polytope Pin_copy,
     auto ball = P_copy.ComputeInnerBall();
     P_copy.shift(ball.first.getCoefficients()); // when using max_ellipsoid for rounding this center is the origin, but if we use other covariances this is different than the origin
     get_first_gaussian(P_copy, frac, ball.second, error, a_vals); // the function included from volume_cooling_gaussians.hpp (spherical gaussians)
-
 #ifdef VOLESTI_DEBUG
     std::cout << "first gaussian computed " << a_vals[0] << std::endl;
 #endif
@@ -449,6 +448,7 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     Eigen::LLT<MT> lltOfA(covariance_matrix);
     auto L = lltOfA.matrixL();
     P.linear_transformIt(L);
+
 
     // Initialize the gaussian_annealing_parameters struct
     non_gaussian_annealing_parameters<NT> parameters(P.dimension());

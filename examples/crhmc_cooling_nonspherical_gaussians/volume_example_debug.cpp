@@ -11,6 +11,7 @@
 
 #include "generators/known_polytope_generators.h"
 #include "random_walks/random_walks.hpp"
+#include "generators/h_polytopes_generator.h"
 #include "volume/volume_cooling_nonspherical_gaussians_crhmc.hpp"
 #include "volume/volume_cooling_gaussians.hpp"
 #include <iostream>
@@ -63,14 +64,17 @@ int main() {
                     Grad
             > crhmc_walk_params;
 
-    boost::random::mt19937 global_gen(FIXED_SEED);
     int walk_len = 10;
     NT e = 0.1;
     RandomNumberGenerator rng;
-    Polytope cube10 = generate_cube<Polytope>(10, false);
 
-    Polytope P(cube10.dimension(), cube10.get_mat(), cube10.get_vec());
-    Polytope newPin(cube10.dimension(), cube10.get_mat(), cube10.get_vec());
+    // Generate a random H-polytope with dimension 10 and 20 hyperplanes
+    Polytope randomPoly = random_hpoly<Polytope, RandomNumberGenerator>(3, 30, FIXED_SEED);
+    std::cout << "Random Poly \n";
+    randomPoly.print();
+
+    Polytope P(randomPoly.dimension(), randomPoly.get_mat(), randomPoly.get_vec());
+    Polytope newPin(randomPoly.dimension(), randomPoly.get_mat(), randomPoly.get_vec());
     unsigned int n = P.dimension();
     unsigned int m = P.num_of_hyperplanes();
     
@@ -93,10 +97,39 @@ int main() {
     Eigen::LLT<MT> lltOfA(covariance_matrix);
     auto L = lltOfA.matrixL();
     P.linear_transformIt(L);
+    // Initialize the gaussian_annealing_parameters struct
+    non_gaussian_annealing_parameters<NT> parameters(P.dimension());
 
+    // Initialization for the schedule annealing
     std::vector<NT> a_vals;
-    a_vals.push_back(5.448);
+    NT ratio = parameters.ratio;
+    NT C = parameters.C;
+    unsigned int N = parameters.N;
 
+    auto ball = P.ComputeInnerBall();
+    P.shift(ball.first.getCoefficients()); // when using max_ellipsoid for rounding this center is the origin, but if we use other covariances this is different than the origin
+    get_first_gaussian(P, parameters.frac, ball.second, e, a_vals); // the function included from volume_cooling_gaussians.hpp (spherical gaussians)
+
+
+    NT a_stop = 0.0;
+
+    if (a_vals[0]<a_stop) a_vals[0] = a_stop;
+
+    NT initial_eta;
+    Point start_point;
+/*
+#ifdef VOLESTI_DEBUG
+    P_copy.print();
+    std::cout << "first \n";
+    P_copy.InnerBall().first.print();
+    std::cout << "second \n" << P_copy.InnerBall().second << "\n";
+    std::cout<<"-----------------------------------------------------\n\n";
+    Pin_copy.print();
+    std::cout << "first \n";
+    Pin_copy.InnerBall().first.print();
+    std::cout << "second \n" << Pin_copy.InnerBall().second << "\n";
+#endif
+*/
     int dimension = newPin.dimension();
     func_params initial_f_params = func_params(Point(dimension), a_vals[0], -1, inv_covariance_matrix);
     Func initial_f(initial_f_params);

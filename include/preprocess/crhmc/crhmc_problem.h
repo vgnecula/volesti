@@ -563,11 +563,10 @@ public:
 #ifdef TIME_KEEPING
     start = std::chrono::system_clock::now();
 #endif
-
     std::tie(center, std::ignore, std::ignore, w_center) =
         lewis_center<Crhmc_problem, SpMat, Opts, MT, VT, NT>(Asp, b, *this, options, center);
-
-    std::tie(std::ignore, hess) = lewis_center_oracle(center, w_center);
+    NT useless =20;
+    std::tie(std::ignore, hess) = lewis_center_oracle(center, w_center, useless);
     CholObj solver = CholObj(transform_format<SpMat,NT,int>(Asp));
     solver.accuracyThreshold = 0;
     VT Hinv = hess.cwiseInverse();
@@ -618,11 +617,21 @@ void print_preparation_time(StreamType& stream){
     return std::make_pair(g + barrier.gradient(x), h + barrier.hessian(x));
   }
   // Gradient and hessian of for the lewis center
-  std::pair<VT, VT> lewis_center_oracle(VT const &x, VT const &w) {
+  std::pair<VT, VT> lewis_center_oracle(VT const &x, VT const &w, NT &cnt) {
     MT g, h;
     std::tie(std::ignore, g, h) = f_oracle(x);
-    return std::make_pair(g + w.cwiseProduct(barrier.gradient(x)),
-                          h + w.cwiseProduct(barrier.hessian(x)));
+    /*if(cnt < 5)
+    {
+          std::cout << "g: \n" << g << "\n";
+          std::cout << "h: \n" << h << "\n";
+          std::cout << "x: \n" << x << "\n";
+          std::cout << "w: \n" << w << "\n";
+          std::cout << "barrier grad: \n" << barrier.gradient(x) << "\n";
+          std::cout << "barrier hess: \n" << barrier.hessian(x) << "\n";
+          std::cout << "w.cwise with grad: \n" << w.cwiseProduct(barrier.gradient(x)) << "\n";
+          std::cout << "w.cwise with hess: \n" << w.cwiseProduct(barrier.hessian(x)) << "\n";
+    }*/
+    return std::make_pair(g + w.cwiseProduct(barrier.gradient(x)), h + w.cwiseProduct(barrier.hessian(x)));
   }
   // Function that uses the transformation (T,y) to apply the function to the
   // original variables

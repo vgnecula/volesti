@@ -826,9 +826,6 @@ public:
 
     void shift(const VT &c)
     {
-        std::cout << "\nThis is c\n" << c;
-        std::cout << "\n This is multy\n" << A*c;
-        
         b -= A*c;
     }
 
