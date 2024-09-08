@@ -71,6 +71,7 @@ template
 >
 NT get_next_gaussian(Polytope& P,
                     Point& p,
+                    NT& eta,
                     NT const& a,
                     const unsigned int &N,
                     const NT &ratio,
@@ -128,12 +129,13 @@ NT get_next_gaussian(Polytope& P,
     problem.options.simdLen = simdLen;
 
     crhmc_walk_params params(input.df, p.dimension(), problem.options);
+    
+    //eta initialization with the previous walk eta
+    problem.options.etaInitialize = false;
+    params.eta = eta;
 
     // Create the walk object for this problem
     CRHMCWalkType walk = CRHMCWalkType(problem, p, input.df, input.f, params);
-
-    burnIn<CRHMCWalkType, crhmc_walk_params, simdLen, Grad, Func, CrhmcProblem>(
-        p, walk_length, rng, g, f, params, problem, walk, 2.5 * N);
 
     NT last_a = a;
     NT last_ratio = 0.1;
@@ -150,7 +152,7 @@ NT get_next_gaussian(Polytope& P,
 
     CRHMCRandomPointGenerator::apply(problem, p, N, walk_length, randPoints,
                                     push_back_policy, rng, g, f, params, walk, simdLen, raw_output);
-
+                                    
     while (!done) {
         NT new_a = last_a * std::pow(ratio, k);
 
@@ -187,8 +189,9 @@ template<
     typename MT,
     typename RandomNumberGenerator
 >
-void compute_annealing_schedule(Polytope Pin_copy,
-                                Polytope P_copy,
+void compute_annealing_schedule(Polytope P,
+                                Point& start_point,
+                                NT& initial_eta,
                                 NT const& ratio,
                                 NT const& C,
                                 NT const& frac,
@@ -229,20 +232,12 @@ void compute_annealing_schedule(Polytope Pin_copy,
 
     typedef CrhmcRandomPointGenerator<CRHMCWalkType> CRHMCRandomPointGenerator;
 
-    // compute the first variance
-    // for this we need P
-    auto ball = P_copy.ComputeInnerBall();
-    P_copy.shift(ball.first.getCoefficients()); // when using max_ellipsoid for rounding this center is the origin, but if we use other covariances this is different than the origin
-    get_first_gaussian(P_copy, frac, ball.second, error, a_vals); // the function included from volume_cooling_gaussians.hpp (spherical gaussians)
-#ifdef VOLESTI_DEBUG
-    std::cout << "first gaussian computed " << a_vals[0] << std::endl;
-#endif
 
     //for the rest we need Pin
     NT a_stop = 0.0;
     const NT tol = 0.001;
     unsigned int it = 0;
-    unsigned int n = Pin_copy.dimension();
+    unsigned int n = P.dimension();
     const unsigned int totalSteps = ((int)150/((1.0 - frac) * error)) + 1;
 
     if (a_vals[0]<a_stop) a_vals[0] = a_stop;
@@ -250,38 +245,12 @@ void compute_annealing_schedule(Polytope Pin_copy,
 #ifdef VOLESTI_DEBUG
     std::cout << "Computing the sequence of gaussians..\n" << std::endl;
 #endif
-    NT initial_eta;
-    Point start_point;
-
-    int dimension = Pin_copy.dimension();
-    func_params initial_f_params = func_params(Point(dimension), a_vals[0], -1, inv_covariance_matrix);
-    Func initial_f(initial_f_params);
-    Grad initial_g(initial_f_params);
-    ZeroFunctor<Point> initial_zerof;
-
-    Input initial_input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(Pin_copy, initial_f, initial_g, initial_zerof);
-    CrhmcProblem initial_problem = CrhmcProblem(initial_input);
-
-    Point initial_p = Point(initial_problem.center);
-    initial_problem.options.simdLen = simdLen;
-    crhmc_walk_params initial_params(initial_input.df, initial_p.dimension(), initial_problem.options);
-    CRHMCWalkType initial_walk = CRHMCWalkType(initial_problem, initial_p, initial_input.df, initial_input.f, initial_params);
-    
-    burnIn<CRHMCWalkType, crhmc_walk_params, simdLen, Grad, Func, CrhmcProblem>(
-        initial_p, walk_length, rng, initial_g, initial_f, initial_params, initial_problem, initial_walk, 2.5 * N);
-
-    //fix eta
-    initial_eta = initial_walk.get_current_eta();
-
-    //fix point
-    start_point = initial_problem.center;
 
     while (true) {
 
         // Compute the next gaussian
         NT next_a = get_next_gaussian<simdLen>(
-            Pin_copy, start_point, a_vals[it], N, ratio, C, walk_length, rng, inv_covariance_matrix);
-
+            P, start_point, initial_eta, a_vals[it], N, ratio, C, walk_length, rng, inv_covariance_matrix);
         // Decide if this is the last one
         NT curr_fn = 0;
         NT curr_its = 0;
@@ -290,14 +259,14 @@ void compute_annealing_schedule(Polytope Pin_copy,
         //TODO: potential problem creation and preprocessing optimization
 
         // Create the CRHMC problem for this variance
-        int dimension = Pin_copy.dimension();
+        int dimension = P.dimension();
         func_params f_params = func_params(Point(dimension), a_vals[it], -1, inv_covariance_matrix);
 
         Func f(f_params);
         Grad g(f_params);
         ZeroFunctor<Point> zerof;
 
-        Input input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(Pin_copy, f, g, zerof);
+        Input input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(P, f, g, zerof);
 
         typedef crhmc_problem<Point, Input> CrhmcProblem;
         
@@ -450,8 +419,43 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     NT C = parameters.C;
     unsigned int N = parameters.N;
 
-    compute_annealing_schedule<simdLen, Point>(newPin, P, ratio, C, parameters.frac, N, walk_length, error, a_vals, inv_covariance_matrix, rng);
+    // Get first gaussian
+    // compute the first variance
+    // for this we need P
+    auto ball = P.ComputeInnerBall();
+    P.shift(ball.first.getCoefficients()); // when using max_ellipsoid for rounding this center is the origin, but if we use other covariances this is different than the origin
+    get_first_gaussian(newPin, parameters.frac, ball.second, error, a_vals); // the function included from volume_cooling_gaussians.hpp (spherical gaussians)
+#ifdef VOLESTI_DEBUG
+    std::cout << "first gaussian computed " << a_vals[0] << std::endl;
+#endif
 
+    // BurnIn Phase
+    NT initial_eta;
+    Point start_point;
+    int dimension = newPin.dimension();
+    func_params initial_f_params = func_params(Point(dimension), a_vals[0], -1, inv_covariance_matrix);
+    Func initial_f(initial_f_params);
+    Grad initial_g(initial_f_params);
+    ZeroFunctor<Point> initial_zerof;
+
+    Input initial_input = convert2crhmc_input<Input, Polytope, Func, Grad, ZeroFunctor<Point>>(newPin, initial_f, initial_g, initial_zerof);
+    CrhmcProblem initial_problem = CrhmcProblem(initial_input);
+
+    Point initial_p = Point(initial_problem.center);
+    initial_problem.options.simdLen = simdLen;
+    crhmc_walk_params initial_params(initial_input.df, initial_p.dimension(), initial_problem.options);
+    CRHMCWalkType initial_walk = CRHMCWalkType(initial_problem, initial_p, initial_input.df, initial_input.f, initial_params);
+
+    burnIn<CRHMCWalkType, crhmc_walk_params, simdLen, Grad, Func, CrhmcProblem>(
+        initial_p, walk_length, rng, initial_g, initial_f, initial_params, initial_problem, initial_walk, 2.5 * N);
+
+    //fix eta
+    initial_eta = initial_walk.get_current_eta();
+
+    //fix point
+    start_point = initial_p;
+    //passed as a reference, this function will also modify initial_p and start_point
+    compute_annealing_schedule<simdLen, Point>(newPin, start_point, initial_eta, ratio, C, parameters.frac, N, walk_length, error, a_vals, inv_covariance_matrix, rng);
 #ifdef VOLESTI_DEBUG
     std::cout<<"All the variances of schedule_annealing computed in = "
             << (double)clock()/(double)CLOCKS_PER_SEC-tstart2<<" sec"<<std::endl;
@@ -487,7 +491,7 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
     std::cout<<"volume of the first gaussian = "<<vol<<"\n"<<std::endl;
     std::cout<<"computing ratios..\n"<<std::endl;
 #endif
-
+    
     //iterate over the number of ratios
     for (viterator fnIt = fn.begin();
          fnIt != fn.end();
@@ -519,25 +523,27 @@ double non_spherical_crhmc_volume_cooling_gaussians(Polytope& Pin,
 
         typedef crhmc_problem<Point, Input> CrhmcProblem;
         CrhmcProblem problem = CrhmcProblem(input);
-        Point p = problem.center;
 
         if(problem.terminate){return 0;}
         problem.options.simdLen=simdLen;
 
         //create the walk and do the burnIn
-        crhmc_walk_params params(input.df, p.dimension(), problem.options);
-        CRHMCWalkType walk = CRHMCWalkType(problem, p, input.df, input.f, params);
+        crhmc_walk_params params(input.df, start_point.dimension(), problem.options);
 
-        burnIn<CRHMCWalkType, crhmc_walk_params, simdLen, Grad, Func, CrhmcProblem>(
-            p, walk_length, rng, g, f, params, problem, walk, 2.5 * N);
+        //eta initialization with the previous walk eta
+        problem.options.etaInitialize = false;
+        params.eta = initial_eta;
+
+        CRHMCWalkType walk = CRHMCWalkType(problem, start_point, input.df, input.f, params);
+
 
         while (!done || (*itsIt) < min_steps)
         {
             walk.apply(rng, walk_length);
-            p = walk.getPoint();
+            start_point = walk.getPoint();
             *itsIt = *itsIt + 1.0;
             
-            *fnIt += eval_exp(p, inv_covariance_matrix, *(avalsIt+1), *avalsIt);
+            *fnIt += eval_exp(start_point, inv_covariance_matrix, *(avalsIt+1), *avalsIt);
 
             NT val = (*fnIt) / (*itsIt);
 
