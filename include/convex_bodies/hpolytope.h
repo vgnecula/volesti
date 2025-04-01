@@ -44,7 +44,8 @@ bool is_inner_point_nan_inf(VT const& p)
 template 
 <
     typename Point, 
-    typename MT_type = Eigen::Matrix<typename Point::FT, Eigen::Dynamic, Eigen::Dynamic>
+    typename MT_type = Eigen::Matrix<typename Point::FT, Eigen::Dynamic, Eigen::Dynamic>,
+    typename SparseMT_type = Eigen::SparseMatrix<typename Point::FT>
 >
 class HPolytope {
 public:
@@ -52,35 +53,41 @@ public:
     typedef typename Point::FT                                NT;
     typedef typename std::vector<NT>::iterator                viterator;
     typedef MT_type                                           MT;
+    typedef SparseMT_type                                     SparseMT;
     typedef Eigen::Matrix<NT, Eigen::Dynamic, 1>              VT;
     typedef Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> DenseMT;
 
 private:
     unsigned int         _d; //dimension
-    MT                   A; //matrix A
-    VT                   b; // vector b, s.t.: Ax<=b
+    SparseMT            sparse_A; //sparse matrix A
+    MT                  dense_A;  //dense matrix A (if needed)
+    VT                  b; // vector b, s.t.: Ax<=b
     std::pair<Point, NT> _inner_ball;
-    bool                 normalized = false; // true if the polytope is normalized
-    bool                 has_ball = false;
+    bool                normalized = false; // true if the polytope is normalized
+    bool                has_ball = false;
+    bool                is_sparse = false; // flag to indicate if matrix is sparse
 
 public:
     //TODO: the default implementation of the Big3 should be ok. Recheck.
     HPolytope() {}
 
+    // Constructor for dense matrices
     HPolytope(unsigned d_, MT const& A_, VT const& b_) :
-        _d{d_}, A{A_}, b{b_}
+        _d{d_}, dense_A{A_}, b{b_}, is_sparse{false}
     {
     }
 
-    template<typename T = DenseMT>
-    HPolytope(unsigned d_, DenseMT const& A_, VT const& b_, typename std::enable_if<!std::is_same<MT, T>::value, T>::type* = 0) :
-        _d{d_}, A{A_.sparseView()}, b{b_}
+    // Constructor for sparse matrices
+    HPolytope(unsigned d_, SparseMT const& A_, VT const& b_) :
+        _d{d_}, sparse_A{A_}, dense_A{A_}, b{b_}, is_sparse{true}
     {
     }
 
     // Copy constructor
-    HPolytope(HPolytope<Point, MT> const& p) :
-            _d{p._d}, A{p.A}, b{p.b}, _inner_ball{p._inner_ball}, normalized{p.normalized}, has_ball{p.has_ball}
+    HPolytope(HPolytope<Point, MT, SparseMT> const& p) :
+        _d{p._d}, sparse_A{p.sparse_A}, dense_A{p.dense_A}, b{p.b}, 
+        _inner_ball{p._inner_ball}, normalized{p.normalized}, 
+        has_ball{p.has_ball}, is_sparse{p.is_sparse}
     {
     }
 
@@ -89,16 +96,16 @@ public:
     HPolytope(std::vector<std::vector<NT>> const& Pin)
     {
         _d = Pin[0][1] - 1;
-        A.resize(Pin.size() - 1, _d);
+        dense_A.resize(Pin.size() - 1, _d);
         b.resize(Pin.size() - 1);
         for (unsigned int i = 1; i < Pin.size(); i++) {
             b(i - 1) = Pin[i][0];
             for (unsigned int j = 1; j < _d + 1; j++) {
-                A.coeffRef(i - 1, j - 1) = -Pin[i][j];
+                dense_A.coeffRef(i - 1, j - 1) = -Pin[i][j];
             }
         }
         has_ball = false;
-        //_inner_ball = ComputeChebychevBall<NT, Point>(A, b);
+        //_inner_ball = ComputeChebychevBall<NT, Point>(dense_A, b);
     }
 
 
@@ -122,11 +129,11 @@ public:
             return;
         }
         if(is_normalized()) {
-            _inner_ball.second = (b - A * r.getCoefficients()).minCoeff();
+            _inner_ball.second = (b - dense_A * r.getCoefficients()).minCoeff();
         } else {
             _inner_ball.second = std::numeric_limits<NT>::max();
             for(int i = 0; i < num_of_hyperplanes(); ++i) {
-                NT dist = (b(i) - A.row(i).dot(r.getCoefficients()) ) / A.row(i).norm();
+                NT dist = (b(i) - dense_A.row(i).dot(r.getCoefficients()) ) / dense_A.row(i).norm();
                 if(dist < _inner_ball.second) {
                     _inner_ball.second = dist;
                 }
@@ -145,7 +152,7 @@ public:
             
             has_ball = true;
             NT const tol = 1e-08;
-            std::tuple<VT, NT, bool> inner_ball = max_inscribed_ball(A, b, 5000, tol);
+            std::tuple<VT, NT, bool> inner_ball = max_inscribed_ball(dense_A, b, 5000, tol);
 
             // check if the solution is feasible
             if (is_in(Point(std::get<0>(inner_ball))) == 0 || std::get<1>(inner_ball) < tol/2.0 ||
@@ -154,7 +161,7 @@ public:
                 
                 std::cerr << "Failed to compute max inscribed ball, trying to use lpsolve" << std::endl;
                 #ifndef DISABLE_LPSOLVE
-                    _inner_ball = ComputeChebychevBall<NT, Point>(A, b); // use lpsolve library
+                    _inner_ball = ComputeChebychevBall<NT, Point>(dense_A, b); // use lpsolve library
                 #else
                     std::cerr << "lpsolve is disabled, unable to compute inner ball";
                     has_ball = false;
@@ -177,7 +184,7 @@ public:
     // return the number of facets
     int num_of_hyperplanes() const
     {
-        return A.rows();
+        return dense_A.rows();
     }
 
     int num_of_generators() const
@@ -189,12 +196,12 @@ public:
     // return the matrix A
     MT get_mat() const
     {
-        return A;
+        return dense_A;
     }
 
 
     MT get_AA() const {
-        return A * A.transpose();
+        return dense_A * dense_A.transpose();
     }
 
     // return the vector b
@@ -212,7 +219,7 @@ public:
     // change the matrix A
     void set_mat(MT const& A2)
     {
-        A = A2;
+        dense_A = A2;
         normalized = false;
         has_ball = false;
     }
@@ -238,10 +245,10 @@ public:
 
     // print polytope in input format
     void print() {
-        std::cout << " " << A.rows() << " " << _d << " double" << std::endl;
-        for (unsigned int i = 0; i < A.rows(); i++) {
+        std::cout << " " << dense_A.rows() << " " << _d << " double" << std::endl;
+        for (unsigned int i = 0; i < dense_A.rows(); i++) {
             for (unsigned int j = 0; j < _d; j++) {
-                std::cout << A.coeff(i, j) << " ";
+                std::cout << dense_A.coeff(i, j) << " ";
             }
             std::cout << "<= " << b(i) << std::endl;
         }
@@ -316,12 +323,12 @@ public:
     //Check if Point p is in H-polytope P:= Ax<=b
     int is_in(Point const& p, NT tol=NT(0)) const
     {
-        int m = A.rows();
+        int m = dense_A.rows();
         const NT* b_data = b.data();
 
         for (int i = 0; i < m; i++) {
             //Check if corresponding hyperplane is violated
-            if (*b_data - A.row(i) * p.getCoefficients() < NT(-tol))
+            if (*b_data - dense_A.row(i) * p.getCoefficients() < NT(-tol))
                 return 0;
 
             b_data++;
@@ -330,29 +337,23 @@ public:
     }
 
     // compute intersection point of ray starting from r and pointing to v
-    // with polytope discribed by A and b
     std::pair<NT,NT> line_intersect(Point const& r, Point const& v) const
     {
-
         NT lamda = 0;
         NT min_plus  = std::numeric_limits<NT>::max();
         NT max_minus = std::numeric_limits<NT>::lowest();
         VT sum_nom, sum_denom;
-        //unsigned int i, j;
         unsigned int j;
         int m = num_of_hyperplanes();
 
-
-        sum_nom.noalias() = b - A * r.getCoefficients();
-        sum_denom.noalias() = A * v.getCoefficients();
+        sum_nom.noalias() = b - dense_A * r.getCoefficients();
+        sum_denom.noalias() = dense_A * v.getCoefficients();
 
         NT* sum_nom_data = sum_nom.data();
         NT* sum_denom_data = sum_denom.data();
 
         for (int i = 0; i < m; i++) {
-
             if (*sum_denom_data == NT(0)) {
-                //std::cout<<"div0"<<std::endl;
                 ;
             } else {
                 lamda = *sum_nom_data / *sum_denom_data;
@@ -365,6 +366,43 @@ public:
         }
         return std::make_pair(min_plus, max_minus);
     }
+
+    // Optimized sparse version of line_intersect
+    std::pair<NT,NT> sparse_line_intersect(Point const& r, Point const& v) const
+    {
+        if (!is_sparse) {
+            return line_intersect(r, v);
+        }
+
+        NT min_plus = std::numeric_limits<NT>::max();
+        NT max_minus = std::numeric_limits<NT>::lowest();
+        const VT& r_coeffs = r.getCoefficients();
+        const VT& v_coeffs = v.getCoefficients();
+        
+        // For each row (constraint) in the sparse matrix
+        for (int i = 0; i < sparse_A.outerSize(); ++i) {
+            // Calculate A_i·r and A_i·v directly through sparse operations
+            NT A_dot_r = 0;
+            NT A_dot_v = 0;
+            
+            // Only iterate through non-zero elements in this row
+            for (typename SparseMT::InnerIterator it(sparse_A, i); it; ++it) {
+                A_dot_r += it.value() * r_coeffs(it.col());
+                A_dot_v += it.value() * v_coeffs(it.col());
+            }
+            
+            // Check intersection
+            NT sum_nom = b(i) - A_dot_r;
+            
+            if (A_dot_v != NT(0)) {
+                NT lamda = sum_nom / A_dot_v;
+                if (lamda < min_plus && lamda > 0) min_plus = lamda;
+                if (lamda > max_minus && lamda < 0) max_minus = lamda;
+            }
+        }
+        
+        return std::make_pair(min_plus, max_minus);
+    } 
 
     // compute intersection points of a ray starting from r and pointing to v
     // with polytope discribed by A and b
@@ -380,9 +418,9 @@ public:
         VT sum_nom;
         int m = num_of_hyperplanes(), facet;
 
-        Ar.noalias() = A * r.getCoefficients();
+        Ar.noalias() = dense_A * r.getCoefficients();
         sum_nom = b - Ar;
-        Av.noalias() = A * v.getCoefficients();;
+        Av.noalias() = dense_A * v.getCoefficients();;
 
 
         NT* Av_data = Av.data();
@@ -426,7 +464,7 @@ public:
 
         Ar.noalias() += lambda_prev*Av;
         sum_nom = b - Ar;
-        Av.noalias() = A * v.getCoefficients();
+        Av.noalias() = dense_A * v.getCoefficients();
 
         NT* sum_nom_data = sum_nom.data();
         NT* Av_data = Av.data();
@@ -490,9 +528,9 @@ public:
         VT sum_nom;
         int m = num_of_hyperplanes(), facet;
 
-        Ar.noalias() = A * r.getCoefficients();
+        Ar.noalias() = dense_A * r.getCoefficients();
         sum_nom.noalias() = b - Ar;
-        Av.noalias() = A * v.getCoefficients();
+        Av.noalias() = dense_A * v.getCoefficients();
 
         NT* Av_data = Av.data();
         NT* sum_nom_data = sum_nom.data();
@@ -644,7 +682,7 @@ public:
 
         Ar.noalias() += lambda_prev*Av;
         sum_nom.noalias() = b - Ar;
-        Av.noalias() = A * v.getCoefficients();
+        Av.noalias() = dense_A * v.getCoefficients();
 
         NT* sum_nom_data = sum_nom.data();
         NT* Av_data = Av.data();
@@ -684,8 +722,8 @@ public:
 
         int m = num_of_hyperplanes();
 
-        sum_denom = A.col(rand_coord);
-        lamdas.noalias() = b - A * r.getCoefficients();
+        sum_denom = dense_A.col(rand_coord);
+        lamdas.noalias() = b - dense_A * r.getCoefficients();
 
         NT* lamda_data = lamdas.data();
         NT* sum_denom_data = sum_denom.data();
@@ -721,12 +759,12 @@ public:
 
         int m = num_of_hyperplanes();
 
-        lamdas.noalias() += (DenseMT)(A.col(rand_coord_prev)
+        lamdas.noalias() += (DenseMT)(dense_A.col(rand_coord_prev)
                          * (r_prev[rand_coord_prev] - r[rand_coord_prev]));
         NT* data = lamdas.data();
 
         for (int i = 0; i < m; i++) {
-            NT a = A.coeff(i, rand_coord);
+            NT a = dense_A.coeff(i, rand_coord);
 
             if (a == NT(0)) {
                 //std::cout<<"div0"<<std::endl;
@@ -763,7 +801,7 @@ public:
         int facet = -1;
 
         sum_nom = Ar - b;
-        Av.noalias() = A * v.getCoefficients();;
+        Av.noalias() = dense_A * v.getCoefficients();;
 
         NT* Av_data = Av.data();
         NT* sum_nom_data = sum_nom.data();
@@ -800,7 +838,7 @@ public:
                                                     VT& Av, // the product Av
                                                     int& facet_prev) const //the facet that the trajectory hit in the previous reflection
     {
-        Ar.noalias() = A * r.getCoefficients();
+        Ar.noalias() = dense_A * r.getCoefficients();
         return get_positive_quadratic_root(r, v, Ac, T, Ar, Av, facet_prev);
     }
 
@@ -862,8 +900,8 @@ public:
 
         VT sum_nom;
         VT sum_denom;
-        sum_nom.noalias() = A * r.getCoefficients();
-        sum_denom.noalias() = A * v.getCoefficients();
+        sum_nom.noalias() = dense_A * r.getCoefficients();
+        sum_denom.noalias() = dense_A * v.getCoefficients();
 
         NT* sum_nom_data = sum_nom.data();
         NT* sum_denom_data = sum_denom.data();
@@ -921,9 +959,9 @@ public:
     void linear_transformIt(T_type const& T)
     {
         if constexpr (std::is_same<MT, DenseMT>::value) {
-            A = A * T;
+            dense_A = dense_A * T;
         } else {
-            A = (A * T).sparseView();
+            dense_A = (dense_A * T).sparseView();
         }
         normalized = false;
         has_ball = false;
@@ -934,7 +972,7 @@ public:
 
     void shift(const VT &c)
     {
-        b -= A*c;
+        b -= dense_A*c;
         has_ball = false;
     }
 
@@ -946,7 +984,7 @@ public:
         std::vector <NT> dists(num_of_hyperplanes(), NT(0));
         typename std::vector<NT>::iterator disit = dists.begin();
         for ( ; disit!=dists.end(); disit++, i++)
-            *disit = b(i) / A.row(i).norm();
+            *disit = b(i) / dense_A.row(i).norm();
 
         return dists;
     }
@@ -960,7 +998,7 @@ public:
 
     MT get_T() const
     {
-        return A;
+        return dense_A;
     }
 
     void normalize()
@@ -968,10 +1006,10 @@ public:
         if(normalized)
             return;
         NT row_norm;
-        for (int i = 0; i < A.rows(); ++i) {
-            row_norm = A.row(i).norm();
+        for (int i = 0; i < dense_A.rows(); ++i) {
+            row_norm = dense_A.row(i).norm();
             if (row_norm != 0.0) {
-                A.row(i) /= row_norm;
+                dense_A.row(i) /= row_norm;
                 b(i) /= row_norm;
             }
         }
@@ -980,7 +1018,7 @@ public:
 
     void compute_reflection(Point& v, Point const&, int const& facet) const
     {
-        v += -2 * v.dot(A.row(facet)) * A.row(facet);
+        v += -2 * v.dot(dense_A.row(facet)) * dense_A.row(facet);
     }
 
     void resetFlags() {}
@@ -991,7 +1029,7 @@ public:
       NT slack;
 
       for (int i = 0; i < m; i++) {
-        slack = b(i) - x.dot(A.row(i));
+        slack = b(i) - x.dot(dense_A.row(i));
         total += log(slack);
       }
 
@@ -1005,8 +1043,8 @@ public:
       Point total(x.dimension());
 
       for (int i = 0; i < m; i++) {
-        slack = b(i) - x.dot(A.row(i));
-        total = total + (1 / slack) * A.row(i);
+        slack = b(i) - x.dot(dense_A.row(i));
+        total = total + (1 / slack) * dense_A.row(i);
       }
       total = (1.0 / t) * total;
       return total;
@@ -1015,7 +1053,7 @@ public:
     // Updates the velocity vector v and the position vector p after a reflection
     template <typename update_parameters>
     void compute_reflection(Point &v, Point const&, update_parameters const& params) const {
-            Point a((-2.0 * params.inner_vi_ak) * A.row(params.facet_prev));
+            Point a((-2.0 * params.inner_vi_ak) * dense_A.row(params.facet_prev));
             v += a;
     }
 
@@ -1026,7 +1064,7 @@ public:
     {
         NT* v_data = v.pointerToData();
         NT* p_data = p.pointerToData();
-        for(Eigen::SparseMatrix<double, Eigen::RowMajor>::InnerIterator it(A, params.facet_prev); it; ++it) {
+        for(Eigen::SparseMatrix<double, Eigen::RowMajor>::InnerIterator it(dense_A, params.facet_prev); it; ++it) {
             *(v_data + it.col()) += (-2.0 * params.inner_vi_ak) * it.value();
             *(p_data + it.col()) -= (-2.0 * params.inner_vi_ak * params.moved_dist) * it.value();
         }
@@ -1039,7 +1077,7 @@ public:
 
             NT new_vEv;
             if constexpr (!std::is_same_v<MT, Eigen::SparseMatrix<NT, Eigen::RowMajor>>) {
-                Point a((-2.0 * params.inner_vi_ak) * A.row(params.facet_prev));
+                Point a((-2.0 * params.inner_vi_ak) * dense_A.row(params.facet_prev));
                 VT x = v.getCoefficients();
                 new_vEv = vEv - (4.0 * params.inner_vi_ak) * (AE.row(params.facet_prev).dot(x) - params.inner_vi_ak * AEA(params.facet_prev));
                 v += a;
@@ -1058,7 +1096,7 @@ public:
 
                 NT* v_data = v.pointerToData();
                 NT* p_data = p.pointerToData();
-                for(Eigen::SparseMatrix<double, Eigen::RowMajor>::InnerIterator it(A, params.facet_prev); it; ++it) {
+                for(Eigen::SparseMatrix<double, Eigen::RowMajor>::InnerIterator it(dense_A, params.facet_prev); it; ++it) {
                     *(v_data + it.col()) += (-2.0 * params.inner_vi_ak) * it.value();
                     *(p_data + it.col()) -= (-2.0 * params.inner_vi_ak * params.moved_dist) * it.value();
                 }
@@ -1081,7 +1119,7 @@ public:
       NonLinearOracle &intersection_oracle,
       int ignore_facet=-1)
     {
-        return intersection_oracle.apply(t_prev, t0, eta, A, b, *this,
+        return intersection_oracle.apply(t_prev, t0, eta, dense_A, b, *this,
                                          coeffs, phi, grad_phi, ignore_facet);
     }
 };
