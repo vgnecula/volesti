@@ -57,8 +57,13 @@ BenchmarkResults benchmark_regular_billiard_walk(DenseHPOLYTOPE& P, unsigned int
     RNGType rng(P.dimension());
     rng.set_seed(FIXED_SEED);  // Set fixed seed
     
-    // Use lpsolve directly for inner ball computation to ensure consistency
-    Point starting_point = P.ComputeInnerBall().first;
+    // Compute analytic center
+    auto [_, x_ac_vec, converged] = barrier_center_ellipsoid_linear_ineq<MT, EllipsoidType::LOG_BARRIER, NT>(P.get_mat(), P.get_vec());
+    if (!converged) {
+        throw std::runtime_error("Failed to compute analytic center");
+    }
+    Point starting_point(x_ac_vec);
+ 
     
     auto t1 = clock::now();
     
@@ -108,7 +113,7 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
     // Use lpsolve directly for inner ball computation to ensure consistency
     Point starting_point = P.ComputeInnerBall().first;
     
-    // Compute analytic center using the robust implementation
+    // Compute analytic center
     auto [Hessian, x_ac_vec, converged] = barrier_center_ellipsoid_linear_ineq<MT, EllipsoidType::LOG_BARRIER, NT>(P.get_mat(), P.get_vec());
     if (!converged) {
         throw std::runtime_error("Failed to compute analytic center");
