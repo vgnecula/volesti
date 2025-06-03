@@ -65,12 +65,14 @@ struct Walk
 {
     typedef typename Polytope::PointType Point;
     typedef typename Point::FT NT;
+    typedef typename Polytope::LLTType LLTType;
 
     template <typename GenericPolytope>
     Walk(GenericPolytope &P, Point const& p, RandomNumberGenerator &rng)
     {
         _Len = compute_diameter<GenericPolytope>
                 ::template compute<NT>(P);
+        _use_llt = false;
         initialize(P, p, rng);
     }
 
@@ -81,6 +83,28 @@ struct Walk
         _Len = params.set_L ? params.m_L
                           : compute_diameter<GenericPolytope>
                             ::template compute<NT>(P);
+        _use_llt = false;
+        initialize(P, p, rng);
+    }
+
+    // Constructor with LLT factor for sparse rounding
+    template <typename GenericPolytope>
+    Walk(GenericPolytope &P, Point const& p, RandomNumberGenerator &rng,
+         LLTType const& llt)
+    {
+        _Len = 2.0 * std::sqrt(P.dimension());  // conservative estimate for rounded body
+        _llt = llt;
+        _use_llt = true;
+        initialize(P, p, rng);
+    }
+
+    template <typename GenericPolytope>
+    Walk(GenericPolytope &P, Point const& p, RandomNumberGenerator &rng,
+         parameters const& params, LLTType const& llt)
+    {
+        _Len = params.set_L ? params.m_L : 2.0 * std::sqrt(P.dimension());  // conservative estimate for rounded body
+        _llt = llt;
+        _use_llt = true;
         initialize(P, p, rng);
     }
 
@@ -100,14 +124,25 @@ struct Walk
         for (auto j=0u; j<walk_length; ++j)
         {
             T = rng.sample_urdist() * _Len;
-            _v = GetDirection<Point>::apply(n, rng);
+            
+            if (_use_llt) {
+                _u = GetDirection<Point>::apply(n, rng);
+                _v = Point(_llt.matrixL() * _u.getCoefficients());
+                _v /= _v.length(); 
+            } else {
+                _v = GetDirection<Point>::apply(n, rng);
+            }
 
             Point p0 = _p;
             int it = 0;
             while (it < 50*n)
             {
-                auto pbpair = P.line_positive_intersect(_p, _v, _lambdas,
-                                                        _Av, _lambda_prev);
+                std::pair<NT, int> pbpair;
+                if (_use_llt) {
+                    pbpair = P.line_positive_intersect(_p, _v, _lambdas, _Av, _llt);
+                } else {
+                    pbpair = P.line_intersect(_p, _v, _lambdas, _Av, true);
+                }
 
                 if (T <= pbpair.first) {
                     _p += (T * _v);
@@ -119,7 +154,11 @@ struct Walk
                 _p += (_lambda_prev * _v);
                 T -= _lambda_prev;
 
-                P.compute_reflection(_v, _p, pbpair.second);
+                if (_use_llt) {
+                    P.compute_reflection(_v, _p, pbpair.second, _llt, _u);
+                } else {
+                    P.compute_reflection(_v, _p, pbpair.second);
+                }
 
                 it++;
             }
@@ -128,6 +167,7 @@ struct Walk
             }
         }
         p = _p;
+        _p.set_to_origin();
     }
 
     inline void update_delta(NT L)
@@ -150,13 +190,26 @@ private :
         _lambdas.setZero(P.num_of_hyperplanes());
         _Av.setZero(P.num_of_hyperplanes());
         _p = p;
-        _v = GetDirection<Point>::apply(n, rng);
+        
+        if (_use_llt) {
+            _u = GetDirection<Point>::apply(n, rng);
+            _v = Point(_llt.matrixL() * _u.getCoefficients());
+            _v /= _v.length();
+        } else {
+            _v = GetDirection<Point>::apply(n, rng);
+        }
 
         NT T = rng.sample_urdist() * _Len;
         Point p0 = _p;
         int it = 0;
-        std::pair<NT, int> pbpair
-                = P.line_positive_intersect(_p, _v, _lambdas, _Av);
+        
+        std::pair<NT, int> pbpair;
+        if (_use_llt) {
+            pbpair = P.line_positive_intersect(_p, _v, _lambdas, _Av, _llt);
+        } else {
+            pbpair = P.line_intersect(_p, _v, _lambdas, _Av, true);
+        }
+        
         if (T <= pbpair.first) {
             _p += (T * _v);
             _lambda_prev = T;
@@ -165,11 +218,22 @@ private :
         _lambda_prev = dl * pbpair.first;
         _p += (_lambda_prev * _v);
         T -= _lambda_prev;
-        P.compute_reflection(_v, _p, pbpair.second);
+        
+        if (_use_llt) {
+            P.compute_reflection(_v, _p, pbpair.second, _llt, _u);
+        } else {
+            P.compute_reflection(_v, _p, pbpair.second);
+        }
+        
         while (it <= 50*n)
         {
-            std::pair<NT, int> pbpair
-                    = P.line_positive_intersect(_p, _v, _lambdas, _Av, _lambda_prev);
+            std::pair<NT, int> pbpair;
+            if (_use_llt) {
+                pbpair = P.line_positive_intersect(_p, _v, _lambdas, _Av, _lambda_prev, static_cast<const LLTType&>(_llt));
+            } else {
+                pbpair = P.line_intersect(_p, _v, _lambdas, _Av, _lambda_prev, true);
+            }
+            
             if (T <= pbpair.first) {
                 _p += (T * _v);
                 _lambda_prev = T;
@@ -182,7 +246,12 @@ private :
             _lambda_prev = dl * pbpair.first;
             _p += (_lambda_prev * _v);
             T -= _lambda_prev;
-            P.compute_reflection(_v, _p, pbpair.second);
+            
+            if (_use_llt) {
+                P.compute_reflection(_v, _p, pbpair.second, _llt, _u);
+            } else {
+                P.compute_reflection(_v, _p, pbpair.second);
+            }
             it++;
         }
     }
@@ -190,11 +259,38 @@ private :
     NT _Len;
     Point _p;
     Point _v;
+    Point _u;
     NT _lambda_prev;
     typename Point::Coeff _lambdas;
     typename Point::Coeff _Av;
+    bool _use_llt;
+    LLTType _llt;
 };
 
 };
+
+template<class HPolytope, class LLTType, class RandomNumberGenerator>
+double rounded_diameter(const HPolytope& P_round,
+                        const LLTType&  llt,
+                        RandomNumberGenerator& rng,
+                        int n_rays = 100)
+{
+    using NT = typename HPolytope::NT;
+    using VT = typename HPolytope::VT;
+    using Point = typename HPolytope::PointType;
+
+    int d = P_round.dimension();
+    NT diam = 0;
+
+    for (int k=0; k<n_rays; ++k) {
+        Point u = GetDirection<Point>::apply(d, rng);
+        VT dir = llt.matrixL() * u.getCoefficients();
+        Point zero_point(d);
+        zero_point.set_to_origin();
+        auto pm = P_round.line_intersect(zero_point, Point(dir));
+        diam = std::max(diam, pm.first - pm.second);
+    }
+    return diam;
+}
 
 #endif // RANDOM_WALKS_UNIFORM_BILLIARD_WALK_HPP
