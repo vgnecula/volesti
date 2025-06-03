@@ -15,6 +15,7 @@
 #include "diagnostics/multivariate_psrf.hpp"
 #include "diagnostics/univariate_psrf.hpp"
 #include "generators/order_polytope_generator.h"
+#include "preprocess/barrier_center_ellipsoid.hpp"
 
 typedef double NT;
 typedef Cartesian<NT> Kernel;
@@ -35,66 +36,6 @@ typedef BilliardWalk::template Walk<SparseHPOLYTOPE, RNGType> SparseBilliardWalk
 PushBackWalkPolicy push_back_policy;
 
 const unsigned int FIXED_SEED = 42;  // Fixed seed for reproducibility
-
-template<class HPolytope>
-typename HPolytope::PointType
-analytic_center(const HPolytope& P,
-                int    max_it = 10,
-                typename HPolytope::NT tol = 1e-8)
-{
-    using NT = typename HPolytope::NT;
-    using VT = typename HPolytope::VT;
-    using MT = typename HPolytope::MT;
-    using Point = typename HPolytope::PointType;
-    using LLTType = typename HPolytope::LLTType;
-
-    MT const&  A = P.get_mat();
-    VT const&  b = P.get_vec();
-
-    Point x = P.InnerBall().first;
-
-    for (int it = 0; it < max_it; ++it) {
-        // For sparse matrices, we need to convert to dense for some operations
-        VT x_coeff = x.getCoefficients();
-        VT slack = b - A * x_coeff;    // m×1  (sparse·dense)
-        if (slack.minCoeff() <= NT(0)) break;      // numerical guard
-
-        /* gradient  g = Aᵀ (1/slack) */
-        VT slack_inv = slack.cwiseInverse();
-        VT g = A.transpose() * slack_inv;
-
-        if (g.norm() < tol) break;                 // converged
-
-        /* Hessian  H = Aᵀ diag(1/slack²) A   (sparse) */
-        VT d = slack.array().pow(-2);
-        
-        // For sparse matrices, we need to handle the diagonal multiplication carefully
-        MT H;
-        if constexpr (std::is_same<MT, Eigen::SparseMatrix<NT>>::value) {
-            // For sparse matrices, use sparse operations
-            Eigen::SparseMatrix<NT> D = d.asDiagonal();
-            H = A.transpose() * D * A;
-        } else {
-            // For dense matrices, use dense operations
-            H = A.transpose() * d.asDiagonal() * A;
-        }
-
-        /* Newton step: solve  H s = g  with LLT */
-        LLTType llt;
-        llt.compute(H);
-        VT step = llt.solve(g);
-
-        /* back-tracking line search (keeps x inside P) */
-        NT α = 1.0;
-        while (α > NT(1e-4)) {
-            Point x_new = x - α * Point(step);
-            if (P.is_in(x_new)) { x = x_new; break; }
-            α *= NT(0.5);
-        }
-        if (α <= NT(1e-4)) break;
-    }
-    return x;
-}
 
 struct BenchmarkResults {
     NT ess_min;
@@ -167,8 +108,12 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
     // Use lpsolve directly for inner ball computation to ensure consistency
     Point starting_point = P.ComputeInnerBall().first;
     
-    // Compute analytic center with fixed seed
-    Point x_ac = analytic_center(P);
+    // Compute analytic center using the robust implementation
+    auto [Hessian, x_ac_vec, converged] = barrier_center_ellipsoid_linear_ineq<MT, EllipsoidType::LOG_BARRIER, NT>(P.get_mat(), P.get_vec());
+    if (!converged) {
+        throw std::runtime_error("Failed to compute analytic center");
+    }
+    Point x_ac(x_ac_vec);
     
     // Shift the polytope to use the analytic center as the origin
     auto A = P.get_mat();
