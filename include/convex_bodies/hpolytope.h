@@ -54,6 +54,7 @@ public:
     typedef MT_type                                           MT;
     typedef Eigen::Matrix<NT, Eigen::Dynamic, 1>              VT;
     typedef Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> DenseMT;
+    typedef Eigen::LLT<DenseMT>                              LLTType;
 
 private:
     unsigned int         _d; //dimension
@@ -472,6 +473,91 @@ public:
         return line_intersect(r, v, Ar, Av, lambda_prev, true);
     }
 
+    std::pair<NT, int> line_positive_intersect(Point const& r,
+                                               Point const& v,
+                                               VT& Ar,
+                                               VT& Av,
+                                               LLTType const& llt) const
+    {
+        VT x = llt.matrixL().solve(r.getCoefficients());
+        VT v_solved = llt.matrixL().solve(v.getCoefficients());
+        
+        Ar.noalias() = A * x;
+        Av.noalias() = A * v_solved;
+        
+        NT min_plus = std::numeric_limits<NT>::max();
+        int facet = -1;
+        
+        for (int i = 0; i < num_of_hyperplanes(); i++) {
+            if (std::abs(Av(i)) < NT(1e-14)) continue;
+            
+            NT lambda = (b(i) - Ar(i)) / Av(i);
+            if (lambda > 0 && lambda < min_plus) {
+                min_plus = lambda;
+                facet = i;
+            }
+        }
+        
+        return std::make_pair(min_plus, facet);
+    }
+
+    std::pair<NT, int> line_positive_intersect(Point const& r,
+                                               Point const& v,
+                                               VT& Ar,
+                                               VT& Av,
+                                               NT const& lambda_prev,
+                                               LLTType const& llt) const
+    {
+        Point r_new = r + lambda_prev * v;
+
+        VT x = llt.matrixL().solve(r_new.getCoefficients());
+        VT v_solved = llt.matrixL().solve(v.getCoefficients());
+        
+        Ar.noalias() = A * x;
+        Av.noalias() = A * v_solved;
+        
+        NT min_plus = std::numeric_limits<NT>::max();
+        int facet = -1;
+        
+        for (int i = 0; i < num_of_hyperplanes(); i++) {
+            if (std::abs(Av(i)) < NT(1e-14)) continue;
+            
+            NT lambda = (b(i) - Ar(i)) / Av(i);
+            if (lambda > 0 && lambda < min_plus) {
+                min_plus = lambda;
+                facet = i;
+            }
+        }
+        
+        return std::make_pair(min_plus, facet);
+    }
+
+    // Helper function to get facet normal in dense format
+    template<typename VT_ = VT>   // keep template so dense build still inlines nicely
+    inline VT_ facet_normal_dense(int facet) const
+    {
+        // Works for both dense & sparse A:
+        return A.row(facet).transpose().eval();   // forces dense column vector
+    }
+    
+    // Optimized version with cached u vector in rounded space
+    void compute_reflection(Point& v, Point const&, int const& facet, LLTType const& llt, Point& u) const
+    {
+
+        // normal in rounded coordinates
+        VT n = llt.matrixL().solve(facet_normal_dense(facet));
+        NT n_norm2 = n.squaredNorm();
+        if (n_norm2 < std::numeric_limits<NT>::epsilon()) {
+            throw std::runtime_error("Normal vector has zero norm in compute_reflection");
+        }
+        NT coef = -2.0 * (u.getCoefficients().dot(n)) / n_norm2;
+
+        // update v in original space
+        v += Point(coef * A.row(facet));
+        
+        // update u in rounded space  
+        u += Point(coef * n);
+    }
 
     //---------------------------accelarated billiard----------------------------------
     // compute intersection point of a ray starting from r and pointing to v
