@@ -16,6 +16,7 @@
 #include "diagnostics/univariate_psrf.hpp"
 #include "generators/order_polytope_generator.h"
 #include "preprocess/barrier_center_ellipsoid.hpp"
+#include "preprocess/svd_rounding.hpp"
 
 typedef double NT;
 typedef Cartesian<NT> Kernel;
@@ -47,74 +48,70 @@ struct BenchmarkResults {
 // =============================================================================
 // STEP 1: BENCHMARK STRUCTURE FOR DENSE ROUNDED BILLIARD WALK
 // =============================================================================
-
 BenchmarkResults benchmark_dense_rounded_billiard_walk(DenseHPOLYTOPE& P, unsigned int num_samples, unsigned int walk_length) {
     std::cout << "Benchmarking Dense Rounded Billiard Walk..." << std::endl;
-    
+
     using clock = std::chrono::high_resolution_clock;
     using seconds = std::chrono::duration<double>;
-    
+
     RNGType rng(P.dimension());
     rng.set_seed(FIXED_SEED);
-    
-    // Step 1: Compute analytic center and Hessian
-    auto [Hessian, x_ac_vec, converged] = barrier_center_ellipsoid_linear_ineq<MT, EllipsoidType::LOG_BARRIER, NT>(P.get_mat(), P.get_vec());
-    if (!converged) {
-        throw std::runtime_error("Failed to compute analytic center");
-    }
+
+    // Step 1: Compute analytic center and Hessian using the established barrier center function
+    auto [H, x_ac_vec, converged] = barrier_center_ellipsoid_linear_ineq<MT, EllipsoidType::LOG_BARRIER, NT>(P.get_mat(), P.get_vec());
+    if (!converged) throw std::runtime_error("Failed to compute analytic center");
     Point x_ac(x_ac_vec);
-    
-    // Step 2: Actually ROUND the dense polytope (apply transformation)
+
+    // Step 2: Create copy of polytope and shift to analytic center
     DenseHPOLYTOPE P_shifted = P;
-    P_shifted.shift(x_ac.getCoefficients());
-    P_shifted.normalize();
+    P_shifted.shift(-x_ac.getCoefficients());
+
+    // Step 3: Compute the rounding transformation using Cholesky decomposition of the Hessian
+    // This follows the same pattern as other rounding methods in volesti
+    Eigen::LLT<MT> llt(H);
+    if (llt.info() != Eigen::Success) throw std::runtime_error("LLT decomposition failed");
     
-    // Step 3: Apply rounding transformation to dense polytope
-    // Compute L from Hessian: H^{-1} = L * L^T
-    Eigen::LLT<MT> llt(Hessian);
-    if (llt.info() != Eigen::Success) {
-        throw std::runtime_error("LLT decomposition failed");
-    }
-    MT L_inv = llt.matrixL().transpose();  // L^{-T}
+    // Get L such that H = L * L^T, then use L^(-1) for the transformation
+    MT L = llt.matrixL();
+    MT L_inv = L.triangularView<Eigen::Lower>().solve(MT::Identity(P.dimension(), P.dimension()));
     
-    // Apply transformation: A_rounded = A * L^{-T}, b stays the same
-    MT A_original = P_shifted.get_mat();
-    VT b_original = P_shifted.get_vec();
-    MT A_rounded = A_original * L_inv.transpose();  // A * L^{-1}
-    
-    DenseHPOLYTOPE P_rounded(P.dimension(), A_rounded, b_original);
-    
-    // Step 4: Use STANDARD billiard walk on the rounded dense polytope
+    // Step 4: Apply the linear transformation to round the polytope: A_rounded = A * L^(-1)
+    MT A_rounded = P_shifted.get_mat() * L_inv;
+    DenseHPOLYTOPE P_rounded(P.dimension(), A_rounded, P_shifted.get_vec());
+
+    // Step 5: Find a feasible starting point in the rounded polytope
     Point origin(P.dimension());
     origin.set_to_origin();
-    
+    if (!P_rounded.is_in(origin)) {
+        origin = P_rounded.ComputeInnerBall().first;
+    }
+
     auto t1 = clock::now();
-    
-    // Generate samples using standard billiard walk on rounded polytope
+
+    // Step 6: Perform walk on the rounded polytope
     std::vector<Point> randPoints;
     typedef RandomPointGenerator<DenseBilliardWalkType> Generator;
-    Generator::apply(P_rounded, origin, num_samples, walk_length,
-                     randPoints, push_back_policy, rng);
-    
+    Generator::apply(P_rounded, origin, num_samples, walk_length, randPoints, push_back_policy, rng);
+
     auto t2 = clock::now();
-    
-    // Transform samples back to original space
-    for (auto& point : randPoints) {
-        // Transform: x_original = L^{-T} * x_rounded + x_ac
-        VT transformed = L_inv.transpose() * point.getCoefficients() + x_ac.getCoefficients();
-        point = Point(transformed);
-    }
-    
-    // Compute diagnostics
+
+    // Step 7: Back-transform samples to original space: x_original = L_inv * x_rounded + x_ac
+    for (auto& p : randPoints) {
+        VT y = p.getCoefficients();          // sample in rounded space
+        VT x_original = L_inv * y + x_ac.getCoefficients();   // <-- use L_inv!
+        p = Point(x_original);
+    } 
+
+    // Step 8: Compute diagnostics
     MT samples(P.dimension(), num_samples);
     for (size_t i = 0; i < randPoints.size(); ++i) {
         samples.col(i) = randPoints[i].getCoefficients();
     }
-    
+
     NT psrf = multivariate_psrf<NT, VT, MT>(samples);
     unsigned int min_ess;
     VT ess_vector = effective_sample_size<NT, VT, MT>(samples, min_ess);
-    
+
     BenchmarkResults results;
     results.ess_min = ess_vector.minCoeff();
     results.ess_avg = ess_vector.mean();
@@ -123,9 +120,10 @@ BenchmarkResults benchmark_dense_rounded_billiard_walk(DenseHPOLYTOPE& P, unsign
     results.walk_type = "Dense Rounded Billiard";
     results.dimension = P.dimension();
     results.num_samples = num_samples;
-    
+
     return results;
 }
+
 
 // =============================================================================
 // STEP 2: BENCHMARK STRUCTURE FOR SPARSE BILLIARD WALK  
@@ -289,6 +287,7 @@ void run_comprehensive_benchmark() {
     // Test 3: Large order polytope (20D) with dense relations
     run_benchmark_case(all_results, 20, 80, num_samples, "Test 3: 20D Order Polytope (Dense)");
     
+    /*
     // Test 4: High-dimensional polytope (30D) with sparse relations
     run_benchmark_case(all_results, 30, 100, num_samples, "Test 4: 30D Order Polytope (Sparse)");
     
@@ -297,7 +296,7 @@ void run_comprehensive_benchmark() {
     
     // Test 6: Ultra high-dimensional polytope (50D) with sparse relations
     run_benchmark_case(all_results, 50, 200, num_samples, "Test 6: 50D Order Polytope (Sparse)");
-    
+    */
     print_results(all_results);
 }
 
