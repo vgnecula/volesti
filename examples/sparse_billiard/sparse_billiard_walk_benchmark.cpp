@@ -124,23 +124,23 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
     auto A = P.get_mat();
     VT b = P.get_vec();
     VT slack = b - A * x_ac.getCoefficients();
-    SparseHPOLYTOPE P_round = P;
-    P_round.shift(x_ac.getCoefficients());
-    P_round.normalize();
+    SparseHPOLYTOPE P_shifted = P;
+    P_shifted.shift(x_ac.getCoefficients());
+    P_shifted.normalize(); 
     
     // Create sparse LLT for on-the-fly rounding
     SparseLLTType llt;
     try {
         // First try to compute the LLT decomposition
-        llt.compute(P_round.get_mat().transpose() * P_round.get_mat());
+        llt.compute(P_shifted.get_mat().transpose() * P_shifted.get_mat());
         if (llt.info() != Eigen::Success) {
             throw std::runtime_error("LLT decomposition failed");
         }
         
         // Now compute the rounded diameter with fixed seed
-        RNGType diameter_rng(P_round.dimension());
+        RNGType diameter_rng(P_shifted.dimension());
         diameter_rng.set_seed(FIXED_SEED);
-        double L_round = rounded_diameter(P_round, llt, diameter_rng);
+        double L_round = rounded_diameter(P_shifted, llt, diameter_rng);
         if (L_round <= 0 || std::isnan(L_round)) {
             throw std::runtime_error("Invalid rounded diameter");
         }
@@ -150,7 +150,7 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
         origin.set_to_origin();
         
         // Create walk with LLT factor and use sparse reflection
-        SparseBilliardWalkType walk(P_round, origin, rng, parms, llt);
+        SparseBilliardWalkType walk(P_shifted, origin, rng, parms, llt);
         std::vector<Point> randPoints;
         randPoints.reserve(num_samples);
 
@@ -160,7 +160,7 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
         unsigned int successful_samples = 0;
         for (unsigned int i = 0; i < num_samples; ++i) {
             try {
-                walk.apply(P_round, current_point, walk_length, rng);  // u is managed internally
+                walk.apply(P_shifted, current_point, walk_length, rng);  // u is managed internally
                 randPoints.push_back(Point(current_point.getCoefficients() + x_ac.getCoefficients()));
                 successful_samples++;
             } catch (const std::exception& e) {
