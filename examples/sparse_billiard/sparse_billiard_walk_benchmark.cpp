@@ -27,9 +27,6 @@ typedef BoostRandomNumberGenerator<boost::mt19937, NT> RNGType;
 // Define both dense and sparse polytope types
 typedef HPolytope<Point> DenseHPOLYTOPE;
 typedef HPolytope<Point, Eigen::SparseMatrix<NT, Eigen::RowMajor>> SparseHPOLYTOPE;
-typedef typename DenseHPOLYTOPE::LLTType DenseLLTType;
-typedef typename SparseHPOLYTOPE::LLTType SparseLLTType;  // Use the polytope's LLT type
-
 typedef BilliardWalk::template Walk<DenseHPOLYTOPE, RNGType> DenseBilliardWalkType;
 typedef BilliardWalk::template Walk<SparseHPOLYTOPE, RNGType> SparseBilliardWalkType;
 
@@ -167,21 +164,23 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
     Point origin(P.dimension());
     origin.set_to_origin();
     
-    // TODO: This will be the NEW SparseBilliardWalk struct, not the old one!
-    // typedef SparseBilliardWalk::template Walk<SparseHPOLYTOPE, RNGType> NewSparseBilliardWalkType;
-    // NewSparseBilliardWalkType walk(P_shifted, origin, rng, walk_length, H_sparse);
-    
+   // Fix: Create parameters object with proper walk length
+    SparseBilliardWalk::parameters parms(walk_length, true);  // Same as dense version
+
+    typedef SparseBilliardWalk::template Walk<SparseHPOLYTOPE, RNGType> SparseBilliardWalkType;
+    SparseBilliardWalkType walk(P_shifted, origin, rng, parms, H_sparse);  // Fixed: use parms instead of walk_length
+
     auto t1 = clock::now();
-    
+
     std::vector<Point> randPoints;
     randPoints.reserve(num_samples);
-    
+
     Point current_point = origin;
-    unsigned int successful_samples = 0;  // FIX: Define this variable
-    
+    unsigned int successful_samples = 0;
+
     for (unsigned int i = 0; i < num_samples; ++i) {
         try {
-            // walk.apply(P_shifted, current_point, walk_length, rng);  // NEW sparse walk
+            walk.apply(P_shifted, current_point, walk_length, rng);  // NEW sparse walk
             // Transform back to original space
             randPoints.push_back(Point(current_point.getCoefficients() + x_ac.getCoefficients()));
             successful_samples++;
@@ -189,7 +188,7 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
             std::cerr << "Error during walk step " << i << ": " << e.what() << std::endl;
             continue;
         }
-    }
+    } 
     
     auto t2 = clock::now();
     
