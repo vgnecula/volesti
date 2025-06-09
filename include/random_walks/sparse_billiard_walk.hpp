@@ -72,34 +72,50 @@ private:
     
     void compute_cholesky_factor(const SparseMT &H)
     {
+        std::cout << "=== CHOLESKY FACTOR DEBUG ===" << std::endl;
+        std::cout << "Hessian size: " << H.rows() << "x" << H.cols() << std::endl;
+        std::cout << "Hessian nnz: " << H.nonZeros() << std::endl;
+        
+        // Check if H is positive definite
+        Eigen::VectorXd eigenvals = Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd>(H.toDense()).eigenvalues();
+        std::cout << "Min eigenvalue: " << eigenvals.minCoeff() << std::endl;
+        std::cout << "Max eigenvalue: " << eigenvals.maxCoeff() << std::endl;
+        std::cout << "Condition number: " << eigenvals.maxCoeff() / eigenvals.minCoeff() << std::endl;
+        
         Eigen::SimplicialLLT<SparseMT, Eigen::Lower> chol(H);
         if (chol.info() != Eigen::Success)
             throw std::runtime_error("Cholesky decomposition failed");
 
-        _L = chol.matrixL();    
-        _A_rounded = (_A * _L).template cast<NT>();      // dense copy
+        _L = chol.matrixL();
+        std::cout << "L size: " << _L.rows() << "x" << _L.cols() << std::endl;
+        std::cout << "L nnz: " << _L.nonZeros() << std::endl;
+        
+        _A_rounded = (_A * _L).template cast<NT>();
+        std::cout << "A size: " << _A.rows() << "x" << _A.cols() << std::endl;
+        std::cout << "A_rounded size: " << _A_rounded.rows() << "x" << _A_rounded.cols() << std::endl;
 
-        // L⁻¹ (upper‑triangular, sparse)
-        Eigen::SparseMatrix<NT, Eigen::ColMajor> I(_L.rows(), _L.cols());
-        I.setIdentity();
-        Eigen::SparseLU<SparseMT> solver;
-        solver.analyzePattern(_L);
-        solver.factorize(_L);
-        _L_inv = solver.solve(I);
+        // L^T (upper triangular, sparse)
+        _L_inv = _L.transpose();
         _L_inv.prune([](int r,int c,NT){return r<=c;});
+        std::cout << "L_inv (L^T) nnz: " << _L_inv.nonZeros() << std::endl;
 
         // -------- row norms of A⋅L and scaled b ---------------------------------
         int m = _A.rows();
         _row_norm.resize(m);
         for (int i=0;i<m;++i){
-            Eigen::SparseVector<NT> row = _A.row(i)*_L;    // A_i· L
+            Eigen::SparseVector<NT> row = _A.row(i)*_L;
             NT nrm = std::sqrt(row.squaredNorm());
             _row_norm(i) = (nrm>0)? nrm: NT(1);
         }
         _b_scaled = _b.array() / _row_norm.array();
 
+        std::cout << "Row norms range: [" << _row_norm.minCoeff() << ", " << _row_norm.maxCoeff() << "]" << std::endl;
+        std::cout << "b_scaled range: [" << _b_scaled.minCoeff() << ", " << _b_scaled.maxCoeff() << "]" << std::endl;
+
         for (int i=0;i<_A_rounded.rows();++i)
-            _A_rounded.row(i) /= _row_norm(i);           // unit normals
+            _A_rounded.row(i) /= _row_norm(i);
+            
+        std::cout << "=== END CHOLESKY DEBUG ===" << std::endl;
     }
  
 
@@ -110,43 +126,99 @@ private:
     line_positive_intersect(Point const& r, Point const& v,
                             VT& Ar_out, VT& Av_out)
     {
-        // Solve L⁻¹ * r and v (to go into rounded space)
-        VT r_solved = r.getCoefficients();
-        _L_inv.template triangularView<Eigen::Upper>().solveInPlace(r_solved);
+        static int debug_call_count = 0;
+        debug_call_count++;
+        
+        // Only print for first few calls to avoid spam
+        bool debug_print = (debug_call_count <= 5);
+        
+        if (debug_print) {
+            std::cout << "\n=== INTERSECTION DEBUG (call " << debug_call_count << ") ===" << std::endl;
+            std::cout << "Input r: " << r.getCoefficients().transpose() << std::endl;
+            std::cout << "Input v: " << v.getCoefficients().transpose() << std::endl;
+        }
 
+        // TEST BOTH TRIANGULAR SOLVE OPTIONS
+        VT r_solved_L = r.getCoefficients();
+        VT r_solved_LT = r.getCoefficients();
+        
+        // Option 1: Solve with L (lower triangular)
+        _L.template triangularView<Eigen::Lower>().solveInPlace(r_solved_L);
+        
+        // Option 2: Solve with L^T (upper triangular) 
+        _L_inv.template triangularView<Eigen::Upper>().solveInPlace(r_solved_LT);
+        
+        if (debug_print) {
+            std::cout << "r_solved with L: " << r_solved_L.transpose() << std::endl;
+            std::cout << "r_solved with L^T: " << r_solved_LT.transpose() << std::endl;
+        }
+
+        // Use the L version for now (you can test both)
+        VT r_solved = r_solved_L;
+        
         VT v_solved = v.getCoefficients();
-        _L_inv.template triangularView<Eigen::Upper>().solveInPlace(v_solved);
+        _L.template triangularView<Eigen::Lower>().solveInPlace(v_solved);
+
+        if (debug_print) {
+            std::cout << "v_solved: " << v_solved.transpose() << std::endl;
+        }
 
         // Compute A * r and A * v
         Ar_out.noalias() = _A * r_solved;
+        VT raw_Av = _A * v_solved;
+        Av_out = raw_Av;
 
-        VT raw_Av = _A * v_solved;    // We'll keep this unscaled for inner_vi_ak
-        Av_out = raw_Av;              // Copy to be scaled for reflection and intersection
+        if (debug_print) {
+            std::cout << "A * r_solved: " << Ar_out.transpose() << std::endl;
+            std::cout << "A * v_solved: " << Av_out.transpose() << std::endl;
+        }
 
         Ar_out.array() /= _row_norm.array();
-        Av_out.array()   /= _row_norm.array();
+        Av_out.array() /= _row_norm.array();
+
+        if (debug_print) {
+            std::cout << "Normalized Ar: " << Ar_out.transpose() << std::endl;
+            std::cout << "Normalized Av: " << Av_out.transpose() << std::endl;
+            std::cout << "b_scaled: " << _b_scaled.transpose() << std::endl;
+        }
 
         NT lambda_min = std::numeric_limits<NT>::max();
         int facet = -1;
-
+        int positive_lambdas = 0;
+        
         for (int i = 0; i < Av_out.size(); ++i)
         {
             NT av = Av_out(i);
-            if (std::abs(av) < NT(1e-12)) continue;  // Skip near-parallel
+            if (std::abs(av) < NT(1e-12)) continue;
 
             NT lambda = (_b_scaled(i) - Ar_out(i)) / av;
-
-            if (lambda > 0 && lambda < lambda_min)
-            {
-                lambda_min      = lambda;
-                facet           = i;
-                _param.inner_vi_ak = raw_Av(i) / _row_norm(i); // scaled
-                _param.facet_prev  = i;
+            
+            if (debug_print && i < 10) {  // Print first 10 constraints
+                std::cout << "Constraint " << i << ": lambda=" << lambda 
+                        << " (b_scaled=" << _b_scaled(i) 
+                        << " - Ar=" << Ar_out(i) << ") / av=" << av << std::endl;
             }
+
+            if (lambda > 0) {
+                positive_lambdas++;
+                if (lambda < lambda_min) {
+                    lambda_min = lambda;
+                    facet = i;
+                    _param.inner_vi_ak = raw_Av(i) / _row_norm(i);
+                    _param.facet_prev = i;
+                }
+            }
+        }
+
+        if (debug_print) {
+            std::cout << "Positive lambdas found: " << positive_lambdas << std::endl;
+            std::cout << "Min lambda: " << lambda_min << ", facet: " << facet << std::endl;
+            std::cout << "=== END INTERSECTION DEBUG ===" << std::endl;
         }
 
         return {lambda_min, facet};
     }
+
 
 
 
@@ -156,10 +228,14 @@ private:
     {
         NT coef = -2.0 * _param.inner_vi_ak;
         int facet = _param.facet_prev;
-        VT row = _A_rounded.row(facet);
-        v += Point(coef * row);
-        u += Point(coef * row);
-    } 
+        
+        // Use pre-computed A_rounded (already normalized)
+        VT row_vec = _A_rounded.row(facet);
+        
+        Point a(coef * row_vec);
+        v += a;
+        u += a;
+    }
     
 
 
@@ -234,22 +310,42 @@ private:
 
     template<typename GenericPolytope>
     inline void initialize(GenericPolytope &P,
-                           Point const& p,
-                           RandomNumberGenerator &rng)
+                        Point const& p,
+                        RandomNumberGenerator &rng)
     {
+        std::cout << "\n=== INITIALIZATION DEBUG ===" << std::endl;
+        std::cout << "Polytope dimension: " << P.dimension() << std::endl;
+        std::cout << "Polytope hyperplanes: " << P.num_of_hyperplanes() << std::endl;
+        std::cout << "Starting point: " << p.getCoefficients().transpose() << std::endl;
+        
+        // Check if starting point satisfies constraints
+        VT Ap = _A * p.getCoefficients();
+        VT slack = _b - Ap;
+        std::cout << "Constraint slack range: [" << slack.minCoeff() << ", " << slack.maxCoeff() << "]" << std::endl;
+        int violated = (slack.array() < 0).count();
+        std::cout << "Violated constraints: " << violated << " out of " << slack.size() << std::endl;
+        
         unsigned int n = P.dimension();
         const NT dl = 0.995;
         _lambdas.setZero(P.num_of_hyperplanes());
         _Av.setZero(P.num_of_hyperplanes());
         _p = p;
         _v = GetDirection<Point>::apply(n, rng);
+        
+        std::cout << "Initial direction: " << _v.getCoefficients().transpose() << std::endl;
 
         NT T = rng.sample_urdist() * _Len;
-        Point p0 = _p;
+        std::cout << "Initial travel distance T: " << T << std::endl;
         
-        // Initial intersection
+        // Rest of initialization...
+        Point p0 = _p;
         auto pbpair = line_positive_intersect(_p, _v, _lambdas, _Av);
         
+        std::cout << "First intersection result: lambda=" << pbpair.first << ", facet=" << pbpair.second << std::endl;
+        std::cout << "=== END INITIALIZATION DEBUG ===" << std::endl;
+            
+
+
         NT lambda = pbpair.first;
         int facet = pbpair.second;
 
@@ -303,7 +399,7 @@ private:
     //       by computing and storing only the vectors and norms for the facets the walk hits"
     SparseRowMT _A;              // Original sparse A (never transformed)
     VT _b;                       // Original b vector  
-    SparseMT _L_inv;             // L^T where H^{-1} = L * L^T
+    SparseMT _L_inv;             // L^T where H = L * L^T (not H^{-1}) 
     
     // Walk state (same as uniform billiard walk for compatibility)
     // From conversation: "keep the structure and everything the same as for the uniform billiard walk"
@@ -314,7 +410,7 @@ private:
     VT _lambdas;
     VT _Av;
 
-    SparseMT _L;                     // lower‑triangular   (H⁻¹ = L·Lᵀ)    // ‖A▭_{i·}‖  – cached once
+    SparseMT _L;                         // lower‑triangular   (H = L·Lᵀ) 
     VT       _b_scaled;              // b  divided by those norms
     VT       _row_norm;
     parameters _param; 

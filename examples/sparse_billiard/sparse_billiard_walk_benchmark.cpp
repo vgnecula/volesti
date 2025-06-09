@@ -128,7 +128,6 @@ BenchmarkResults benchmark_dense_rounded_billiard_walk(DenseHPOLYTOPE& P, unsign
 // =============================================================================
 // STEP 2: BENCHMARK STRUCTURE FOR SPARSE BILLIARD WALK  
 // =============================================================================
-
 BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int num_samples, unsigned int walk_length) {
     std::cout << "Benchmarking Sparse Billiard Walk..." << std::endl;
     
@@ -138,17 +137,108 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
     RNGType rng(P.dimension());
     rng.set_seed(FIXED_SEED);
     
-    // Step 1: Compute analytic center and Hessian
-    auto [Hessian, x_ac_vec, converged] = barrier_center_ellipsoid_linear_ineq<MT, EllipsoidType::LOG_BARRIER, NT>(P.get_mat(), P.get_vec());
-    if (!converged) {
-        throw std::runtime_error("Failed to compute analytic center");
+    // =============================================================================
+    // DEBUG: BARRIER CENTER COMPUTATION
+    // =============================================================================
+    std::cout << "\n=== BARRIER CENTER DEBUG ===" << std::endl;
+    
+    // Check input polytope properties
+    std::cout << "Input polytope properties:" << std::endl;
+    std::cout << "  Dimension: " << P.dimension() << std::endl;
+    std::cout << "  Num hyperplanes: " << P.num_of_hyperplanes() << std::endl;
+    
+    // Get the constraint matrix and vector
+    auto A_matrix = P.get_mat();
+    auto b_vector = P.get_vec();
+    
+    std::cout << "  A matrix type: " << typeid(A_matrix).name() << std::endl;
+    std::cout << "  A matrix size: " << A_matrix.rows() << "x" << A_matrix.cols() << std::endl;
+    std::cout << "  A matrix nnz: " << A_matrix.nonZeros() << std::endl;
+    std::cout << "  b vector size: " << b_vector.size() << std::endl;
+    std::cout << "  b vector range: [" << b_vector.minCoeff() << ", " << b_vector.maxCoeff() << "]" << std::endl;
+    
+    // Check if polytope is bounded and has interior
+    std::cout << "\nPolytope validation:" << std::endl;
+    Point test_origin(P.dimension());
+    test_origin.set_to_origin();
+    std::cout << "  Origin feasible: " << (P.is_in(test_origin) ? "YES" : "NO") << std::endl;
+    
+    // Check constraint satisfaction at origin
+    VT Ax = A_matrix * test_origin.getCoefficients();
+    VT slack = b_vector - Ax;
+    std::cout << "  Constraint slack at origin: [" << slack.minCoeff() << ", " << slack.maxCoeff() << "]" << std::endl;
+    int violated_at_origin = (slack.array() <= 0).count();
+    std::cout << "  Violated constraints at origin: " << violated_at_origin << " / " << slack.size() << std::endl;
+    
+    // =============================================================================
+    // CALL BARRIER CENTER FUNCTION WITH DEBUGGING
+    // =============================================================================
+    std::cout << "\nCalling barrier_center_ellipsoid_linear_ineq..." << std::endl;
+    
+    MT Hessian;
+    VT x_ac_vec;
+    bool converged;
+    
+    try {
+        
+        // Step 1: Convert sparse matrix to dense for barrier center computation
+        MT A_dense = MT(A_matrix);  // Convert sparse to dense
+        VT b_dense = b_vector;      // b is already dense
+
+        // Step 2: Call barrier center function with dense matrix
+        auto result = barrier_center_ellipsoid_linear_ineq<MT, EllipsoidType::LOG_BARRIER, NT>(A_dense, b_dense);
+
+        Hessian = std::get<0>(result);
+        x_ac_vec = std::get<1>(result);
+        converged = std::get<2>(result);
+        
+        std::cout << "Barrier center computation result:" << std::endl;
+        std::cout << "  Converged: " << (converged ? "YES" : "NO") << std::endl;
+        std::cout << "  Hessian type: " << typeid(Hessian).name() << std::endl;
+        std::cout << "  Hessian size: " << Hessian.rows() << "x" << Hessian.cols() << std::endl;
+        std::cout << "  Hessian is dense matrix" << std::endl;
+        std::cout << "  Analytic center: " << x_ac_vec.transpose() << std::endl;
+        
+        // Check if analytic center is actually feasible
+        Point x_ac(x_ac_vec);
+        std::cout << "  Analytic center feasible: " << (P.is_in(x_ac) ? "YES" : "NO") << std::endl;
+        
+        // Check constraint satisfaction at analytic center
+        VT Ax_ac = A_matrix * x_ac_vec;
+        VT slack_ac = b_vector - Ax_ac;
+        std::cout << "  Constraint slack at analytic center: [" << slack_ac.minCoeff() << ", " << slack_ac.maxCoeff() << "]" << std::endl;
+        int violated_at_ac = (slack_ac.array() <= 1e-10).count();
+        std::cout << "  Violated constraints at analytic center: " << violated_at_ac << " / " << slack_ac.size() << std::endl;
+        
+        // Check Hessian properties
+        Eigen::VectorXd eigenvals = Eigen::SelfAdjointEigenSolver<MT>(Hessian).eigenvalues();
+        std::cout << "  Hessian eigenvalues: [" << eigenvals.minCoeff() << ", " << eigenvals.maxCoeff() << "]" << std::endl;
+        std::cout << "  Hessian condition number: " << (eigenvals.maxCoeff() / eigenvals.minCoeff()) << std::endl;
+        std::cout << "  Hessian positive definite: " << (eigenvals.minCoeff() > 1e-12 ? "YES" : "NO") << std::endl;
+        
+        if (!converged) {
+            std::cout << "ERROR: Barrier center computation did not converge!" << std::endl;
+            throw std::runtime_error("Failed to compute analytic center");
+        }
+        
+        if (eigenvals.minCoeff() <= 1e-12) {
+            std::cout << "ERROR: Hessian is not positive definite!" << std::endl;
+            std::cout << "This suggests the barrier method failed or the polytope has issues." << std::endl;
+            throw std::runtime_error("Hessian is not positive definite");
+        }
+        
+        std::cout << "=== END BARRIER CENTER DEBUG ===" << std::endl;
+        
+    } catch (const std::exception& e) {
+        std::cout << "EXCEPTION in barrier_center_ellipsoid_linear_ineq: " << e.what() << std::endl;
+        throw;
     }
+    
     Point x_ac(x_ac_vec);
     
     // Step 2: Shift polytope to analytic center (keep sparse)
     SparseHPOLYTOPE P_shifted = P;
     P_shifted.shift(-x_ac.getCoefficients());
-    
     
     // Step 3: Convert Hessian to sparse format
     Eigen::SparseMatrix<NT, Eigen::ColMajor> H_sparse;
@@ -162,8 +252,8 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
     Point origin(P.dimension());
     origin.set_to_origin();
 
-    if ( !P_shifted.is_in(origin) ) {                 // NEW
-        origin = P_shifted.ComputeInnerBall().first;  // NEW – strictly interior
+    if ( !P_shifted.is_in(origin) ) {
+        origin = P_shifted.ComputeInnerBall().first;
         std::cout << "Computed inner ball" << std::endl;
     } else {
         std::cout << "WARNING: Origin is not in the polytope" << std::endl;
@@ -172,8 +262,8 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
     
     // Fix: Create parameters object with proper walk length
     typedef SparseBilliardWalk::template Walk<SparseHPOLYTOPE, RNGType> SparseBilliardWalkType;
-    SparseBilliardWalkType::parameters parms(walk_length, true);  // Same as dense version
-    SparseBilliardWalkType walk(P_shifted, origin, rng, parms, H_sparse);  // Fixed: use parms instead of walk_length
+    SparseBilliardWalkType::parameters parms(walk_length, true);
+    SparseBilliardWalkType walk(P_shifted, origin, rng, parms, H_sparse);
 
     auto t1 = clock::now();
 
@@ -185,7 +275,7 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
 
     for (unsigned int i = 0; i < num_samples; ++i) {
         try {
-            walk.apply(P_shifted, current_point, walk_length, rng);  // NEW sparse walk
+            walk.apply(P_shifted, current_point, walk_length, rng);
             // Transform back to original space
             randPoints.push_back(Point(current_point.getCoefficients() + x_ac.getCoefficients()));
             successful_samples++;
@@ -202,7 +292,7 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
     }
     
     // Compute diagnostics
-    MT samples(P.dimension(), successful_samples);  // FIX: Use successful_samples
+    MT samples(P.dimension(), successful_samples);
     for (size_t i = 0; i < randPoints.size(); ++i) {
         samples.col(i) = randPoints[i].getCoefficients();
     }
@@ -218,11 +308,10 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
     results.time_walk = seconds(t2 - t1).count();
     results.walk_type = "Sparse Billiard";
     results.dimension = P.dimension();
-    results.num_samples = successful_samples;  // FIX: Use successful_samples
+    results.num_samples = successful_samples;
     
     return results;
 }
-
 
 
 void print_results(const std::vector<BenchmarkResults>& results) {
