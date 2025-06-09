@@ -70,131 +70,109 @@ struct Walk
 
 private:
     
-    // Fixed Cholesky computation
     void compute_cholesky_factor(const SparseMT &H)
     {
-        std::cout << "=== CHOLESKY FACTOR DEBUG ===" << std::endl;
+        std::cout << "=== CORRECTED CHOLESKY SETUP ===" << std::endl;
         std::cout << "Hessian size: " << H.rows() << "x" << H.cols() << std::endl;
         std::cout << "Hessian nnz: " << H.nonZeros() << std::endl;
         
-        // Check if H is positive definite
-        Eigen::VectorXd eigenvals = Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd>(H.toDense()).eigenvalues();
-        std::cout << "Min eigenvalue: " << eigenvals.minCoeff() << std::endl;
-        std::cout << "Max eigenvalue: " << eigenvals.maxCoeff() << std::endl;
-        std::cout << "Condition number: " << eigenvals.maxCoeff() / eigenvals.minCoeff() << std::endl;
+        // CRITICAL FIX 1: Follow the comment exactly
+        // "The Hessian can be used to round the polytope by computing the cholesky L of H^{-1}"
+        // "Then, the cholesky L_inv of H will also be sparse and triangular"
         
-        // Compute Cholesky: H = L * L^T
-        Eigen::SimplicialLLT<SparseMT, Eigen::Lower> chol(H);
-        if (chol.info() != Eigen::Success)
-            throw std::runtime_error("Cholesky decomposition failed");
-
-        _L = chol.matrixL();  // Lower triangular L
-        std::cout << "L size: " << _L.rows() << "x" << _L.cols() << std::endl;
-        std::cout << "L nnz: " << _L.nonZeros() << std::endl;
+        Eigen::MatrixXd H_dense = H.toDense();
+        std::cout << "Computing H^(-1)..." << std::endl;
+        Eigen::MatrixXd H_inv = H_dense.inverse();
         
-        // _L_inv is L^T for the coordinate transformation: x_rounded = L^{-T} * x
-        _L_inv = _L.transpose();
-        std::cout << "L_inv (L^T) nnz: " << _L_inv.nonZeros() << std::endl;
-
-        // CRITICAL FIX: Compute A_rounded = A * L^{-1} (NOT A * L^{-T})
-        // Mathematical reasoning:
-        // - Points transform as: x_rounded = L^{-T} * x_original  
-        // - Constraints transform as: A_rounded * x_rounded ≤ b
-        // - Substituting: A_rounded * (L^{-T} * x_original) ≤ b
-        // - Therefore: A_rounded = A * L^{-1} * L^T = A * L^{-1}
+        // Cholesky of H^(-1): H^(-1) = L * L^T
+        std::cout << "Computing Cholesky of H^(-1)..." << std::endl;
+        Eigen::LLT<Eigen::MatrixXd> llt_Hinv(H_inv);
+        if (llt_Hinv.info() != Eigen::Success)
+            throw std::runtime_error("Cholesky decomposition of H^(-1) failed");
         
-        int m = _A.rows();
-        int n = _A.cols();
-        _row_norm.resize(m);
-        _A_rounded.resize(m, n);
+        Eigen::MatrixXd L = llt_Hinv.matrixL();  // L where H^(-1) = L * L^T
+        _L = L.sparseView();  // Store L (lower triangular)
         
-        // Compute A_rounded = A * L^{-1} by solving L * Y = A^T, then A_rounded = Y^T
-        MT A_dense = MT(_A);  // Convert sparse A to dense for easier computation
-        MT L_dense = MT(_L);  // Convert sparse L to dense
+        std::cout << "L (from H^(-1) = L*L^T) nnz: " << _L.nonZeros() << std::endl;
         
-        // Solve L * A_rounded^T = A^T for A_rounded^T
-        MT A_rounded_T = L_dense.template triangularView<Eigen::Lower>().solve(A_dense.transpose());
-        _A_rounded = A_rounded_T.transpose();
+        // CRITICAL FIX 2: Verify the transformation works
+        // Check: L^T * H * L should equal I (identity)
+        Eigen::MatrixXd verification = L.transpose() * H_dense * L;
+        Eigen::MatrixXd error = verification - Eigen::MatrixXd::Identity(H.rows(), H.cols());
+        std::cout << "Verification ||L^T * H * L - I||: " << error.norm() << std::endl;
         
-        // Compute row norms BEFORE normalization
-        for (int i = 0; i < m; ++i) {
-            NT nrm = _A_rounded.row(i).norm();
-            _row_norm(i) = (nrm > NT(1e-12)) ? nrm : NT(1);
+        if (error.norm() > 1e-10) {
+            std::cout << "ERROR: Transformation verification failed!" << std::endl;
+            std::cout << "The rounding transformation is incorrect." << std::endl;
+            throw std::runtime_error("Invalid rounding transformation");
         }
         
-        // Scale b by row norms  
-        _b_scaled = _b.array() / _row_norm.array();
+        // Store b without modification for now
+        _b_scaled = _b;
         
-        // Normalize A_rounded rows to have unit norm
-        for (int i = 0; i < m; ++i) {
-            _A_rounded.row(i) /= _row_norm(i);
-        }
-
-        std::cout << "Row norms range: [" << _row_norm.minCoeff() << ", " << _row_norm.maxCoeff() << "]" << std::endl;
-        std::cout << "b_scaled range: [" << _b_scaled.minCoeff() << ", " << _b_scaled.maxCoeff() << "]" << std::endl;
-        std::cout << "=== END CHOLESKY DEBUG ===" << std::endl;
+        std::cout << "=== END CORRECTED CHOLESKY SETUP ===" << std::endl;
     }
- 
 
-    // Lazy boundary oracle using sparse triangular solves (key innovation)
-    // From TolisChal: "So, for example, in the boundary oracle instead of doing Ax = A_rounded*x 
-    //                  we do Ax = A * L_inv.template triangularView<Eigen::Upper>().solve(x);"
+    // CRITICAL FIX 3: Implement TRUE lazy boundary oracle as described in comment
+    // "instead of doing Ax = A_rounded*x we do Ax = A * L_inv.template triangularView<Eigen::Upper>().solve(x)"
     std::pair<NT, int>
     line_positive_intersect(Point const& r, Point const& v,
                             VT& Ar_out, VT& Av_out)
     {
         static int debug_call_count = 0;
         debug_call_count++;
-        
-        // Only print for first few calls to avoid spam
-        bool debug_print = (debug_call_count <= 5);
+        bool debug_print = (debug_call_count <= 3);
         
         if (debug_print) {
-            std::cout << "\n=== INTERSECTION DEBUG (call " << debug_call_count << ") ===" << std::endl;
-            std::cout << "Input r: " << r.getCoefficients().transpose() << std::endl;
-            std::cout << "Input v: " << v.getCoefficients().transpose() << std::endl;
+            std::cout << "\n=== CORRECTED INTERSECTION (call " << debug_call_count << ") ===" << std::endl;
         }
 
-        // CORRECT: Use L^T (upper triangular) solve to transform to rounded coordinates
-        // Mathematical reasoning: if H = L*L^T, then to transform x to rounded space,
-        // we need L^{-T} * x, which is solved by L^T \ x (upper triangular solve)
-        VT r_rounded = r.getCoefficients();
-        VT v_rounded = v.getCoefficients();
+        // Step 1: Apply coordinate transformation using triangular solve
+        // From comment: "Ax = A * L_inv.template triangularView<Eigen::Upper>().solve(x)"
+        // But L is lower triangular, so we need to solve L * y = x for y
+        // This gives us y = L^(-1) * x, which is the rounded coordinate
         
-        // Transform both position and direction to rounded coordinates
-        _L_inv.template triangularView<Eigen::Upper>().solveInPlace(r_rounded);
-        _L_inv.template triangularView<Eigen::Upper>().solveInPlace(v_rounded);
+        VT r_original = r.getCoefficients();
+        VT v_original = v.getCoefficients();
+        
+        // Solve L * r_rounded = r_original for r_rounded
+        VT r_rounded = r_original;
+        VT v_rounded = v_original;
+        
+        // CRITICAL: Use lower triangular solve since L is lower triangular
+        _L.template triangularView<Eigen::Lower>().solveInPlace(r_rounded);
+        _L.template triangularView<Eigen::Lower>().solveInPlace(v_rounded);
         
         if (debug_print) {
-            std::cout << "r_rounded (L^T solve): " << r_rounded.transpose() << std::endl;
-            std::cout << "v_rounded (L^T solve): " << v_rounded.transpose() << std::endl;
+            std::cout << "Lazy coordinate transformation:" << std::endl;
+            std::cout << "  ||r_original||: " << r_original.norm() << std::endl;
+            std::cout << "  ||r_rounded||:  " << r_rounded.norm() << std::endl;
+            std::cout << "  Transformation ratio: " << r_rounded.norm() / r_original.norm() << std::endl;
         }
 
-        // Compute A * r_rounded and A * v_rounded using original sparse matrix A
-        Ar_out.noalias() = _A * r_rounded;
-        VT raw_Av = _A * v_rounded;
-        Av_out = raw_Av;
+        // Step 2: Apply constraints in original space to transformed coordinates
+        // This preserves sparsity of A!
+        Ar_out = _A * r_rounded;
+        Av_out = _A * v_rounded;
 
         if (debug_print) {
-            std::cout << "A * r_rounded: " << Ar_out.transpose() << std::endl;
-            std::cout << "A * v_rounded: " << Av_out.transpose() << std::endl;
+            // Verify feasibility after transformation
+            VT slack_transformed = _b_scaled - Ar_out;
+            int violated_transformed = (slack_transformed.array() < -1e-10).count();
+            std::cout << "Transformed feasibility: violated=" << violated_transformed << "/" << slack_transformed.size() << std::endl;
+            std::cout << "Slack range: [" << slack_transformed.minCoeff() << ", " << slack_transformed.maxCoeff() << "]" << std::endl;
+            
+            // Double-check: verify point is feasible in original space
+            VT Ar_original_check = _A * r_original;
+            VT slack_original_check = _b - Ar_original_check;
+            std::cout << "Original space check: violated=" << (slack_original_check.array() < -1e-10).count() << "/" << slack_original_check.size() << std::endl;
         }
 
-        // Normalize by row norms (this makes constraints unit-norm in rounded space)
-        Ar_out.array() /= _row_norm.array();
-        Av_out.array() /= _row_norm.array();
-
-        if (debug_print) {
-            std::cout << "Normalized Ar: " << Ar_out.transpose() << std::endl;
-            std::cout << "Normalized Av: " << Av_out.transpose() << std::endl;
-            std::cout << "b_scaled: " << _b_scaled.transpose() << std::endl;
-        }
-
+        // Step 3: Find intersection λ such that A * (r + λ*v) = b
         NT lambda_min = std::numeric_limits<NT>::max();
         int facet = -1;
         int positive_lambdas = 0;
         
-        // Find ray-polytope intersection in rounded space
         for (int i = 0; i < Av_out.size(); ++i)
         {
             NT av = Av_out(i);
@@ -202,74 +180,94 @@ private:
 
             NT lambda = (_b_scaled(i) - Ar_out(i)) / av;
             
-            if (debug_print && i < 10) {  // Print first 10 constraints
-                std::cout << "Constraint " << i << ": lambda=" << lambda 
-                        << " (b_scaled=" << _b_scaled(i) 
-                        << " - Ar=" << Ar_out(i) << ") / av=" << av << std::endl;
+            if (debug_print && i < 5) {
+                std::cout << "Constraint " << i << ": lambda=" << lambda << " (av=" << av << ")" << std::endl;
             }
 
-            if (lambda > NT(1e-12)) {  // Use small positive threshold
+            if (lambda > NT(1e-12)) {
                 positive_lambdas++;
                 if (lambda < lambda_min) {
                     lambda_min = lambda;
                     facet = i;
-                    // Store normalized value for reflection
-                    _param.inner_vi_ak = raw_Av(i) / _row_norm(i);
+                    _param.inner_vi_ak = av;
                     _param.facet_prev = i;
                 }
             }
         }
 
         if (debug_print) {
-            std::cout << "Positive lambdas found: " << positive_lambdas << std::endl;
-            std::cout << "Min lambda: " << lambda_min << ", facet: " << facet << std::endl;
-            std::cout << "=== END INTERSECTION DEBUG ===" << std::endl;
+            std::cout << "Found " << positive_lambdas << " positive intersections" << std::endl;
+            std::cout << "Best: lambda=" << lambda_min << ", facet=" << facet << std::endl;
+            std::cout << "=== END CORRECTED INTERSECTION ===" << std::endl;
         }
 
-        // Return -1 facet if no valid intersection found
         if (facet == -1) {
             lambda_min = std::numeric_limits<NT>::max();
         }
 
         return {lambda_min, facet};
-    } 
+    }
 
-
-
-
-    // Fixed reflection oracle
+    // CRITICAL FIX 4: Corrected reflection oracle
     void compute_reflection(Point& v, Point& u)
     {
         NT coef = -2.0 * _param.inner_vi_ak;
         int facet = _param.facet_prev;
         
-        if (facet < 0) return; // Safety check
+        if (facet < 0 || facet >= _A.rows()) {
+            std::cout << "WARNING: Invalid facet " << facet << std::endl;
+            return;
+        }
         
-        // Use pre-computed normalized A_rounded row
-        VT row_vec = _A_rounded.row(facet);
+        // Get the constraint normal from original A (preserves sparsity)
+        VT a_facet(_A.cols());
+        for (int j = 0; j < _A.cols(); ++j) {
+            a_facet(j) = _A.coeff(facet, j);
+        }
         
-        Point a(coef * row_vec);
-        v += a;
-        u += a;
+        // Transform normal to rounded space: a_rounded = L^(-T) * a_facet
+        // Since L is lower triangular, L^(-T) is upper triangular
+        // Solve L^T * a_rounded = a_facet for a_rounded
+        VT a_rounded = a_facet;
+        _L.transpose().template triangularView<Eigen::Upper>().solveInPlace(a_rounded);
+        
+        // Apply reflection in rounded space
+        Point reflection(coef * a_rounded);
+        v += reflection;
+        u += reflection;
+        
+        static int reflection_count = 0;
+        reflection_count++;
+        if (reflection_count <= 3) {
+            std::cout << "Corrected reflection " << reflection_count << ": facet=" << facet 
+                      << ", coef=" << coef << ", ||a_rounded||=" << a_rounded.norm() << std::endl;
+        }
     }
-    
-
-
 
 public:
 
-    // Main walk function (same interface as uniform billiard walk)
-    // From conversation: "keep the structure and everything the same as for the uniform billiard walk, 
-    //                     but change the logic according to all the previous comments"
-    // Fixed main walk function with better error handling
+    // CRITICAL FIX 5: Enhanced walk with better error handling
     template<typename GenericPolytope>
     inline void apply(GenericPolytope &P,
                     Point& p,
                     unsigned int const& walk_length,
                     RandomNumberGenerator &rng)
     {
+        static int walk_call_count = 0;
+        walk_call_count++;
+        bool debug_walk = (walk_call_count == 1);  // Only debug first walk
+        
+        if (debug_walk) {
+            std::cout << "\n=== CORRECTED WALK DEBUG ===" << std::endl;
+            std::cout << "Walk length: " << walk_length << std::endl;
+        }
+
         unsigned int n = P.dimension();
         const NT dl = 0.995;
+        
+        int successful_steps = 0;
+        int failed_steps = 0;
+        int resets = 0;
 
         for (auto j = 0u; j < walk_length; ++j)
         {
@@ -282,33 +280,38 @@ public:
             
             while (it < 50 * n)
             {
-                // Use lazy boundary oracle
                 auto pbpair = line_positive_intersect(_p, _v, _lambdas, _Av);
 
                 NT lambda = pbpair.first;
                 int facet = pbpair.second;
 
-                // Improved error handling
+                // Better error handling
                 if (facet < 0 || lambda <= 0 || lambda == std::numeric_limits<NT>::max()) {
                     consecutive_failures++;
-                    if (consecutive_failures > 5) {
-                        // Reset to a safe state
+                    
+                    if (consecutive_failures > 3) {  // Reduced threshold
+                        // Reset to feasible state
                         _p = p0;
                         _v = GetDirection<Point>::apply(n, rng);
-                        std::cout << "WARNING: Resetting due to consecutive failures" << std::endl;
+                        resets++;
+                        if (debug_walk && j < 3) {
+                            std::cout << "Reset at step " << j << " after " << consecutive_failures << " failures" << std::endl;
+                        }
                         break;
                     }
                     
-                    // Try a small random step
-                    _p += 0.01 * GetDirection<Point>::apply(n, rng);
+                    // Small perturbation
+                    _p += 0.001 * GetDirection<Point>::apply(n, rng);
+                    it++;
                     continue;
                 }
                 
-                consecutive_failures = 0; // Reset failure counter
+                consecutive_failures = 0;
 
                 if (T <= lambda) {
                     _p += (T * _v);
                     _lambda_prev = T;
+                    successful_steps++;
                     break;
                 }
 
@@ -316,23 +319,23 @@ public:
                 _p += (_lambda_prev * _v);
                 T -= _lambda_prev;
 
-                // Use lazy reflection oracle
                 compute_reflection(_v, _p);
-
                 it++;
             }
             
-            if (it == 50 * n) {
-                _p = p0; // Reset on timeout
+            if (it >= 50 * n) {
+                _p = p0;  // Reset on timeout
+                resets++;
             }
         }
         
+        if (debug_walk) {
+            std::cout << "Walk completed: " << successful_steps << "/" << walk_length << " successful" << std::endl;
+            std::cout << "Resets: " << resets << std::endl;
+            std::cout << "=== END CORRECTED WALK DEBUG ===" << std::endl;
+        }
+        
         p = Point(_p.getCoefficients());
-    }
-
-    inline void update_delta(NT L)
-    {
-        _Len = L;
     }
 
 private:
@@ -342,6 +345,9 @@ private:
                         Point const& p,
                         RandomNumberGenerator &rng)
     {
+        // Store originals for debugging
+        _original_A_dense = MT(_A);
+        _original_b = _b;
         std::cout << "\n=== INITIALIZATION DEBUG ===" << std::endl;
         std::cout << "Polytope dimension: " << P.dimension() << std::endl;
         std::cout << "Polytope hyperplanes: " << P.num_of_hyperplanes() << std::endl;
@@ -422,28 +428,23 @@ private:
         }
     }
 
-    // Core sparse data structures
-    // From TolisChal: "For those we need the _L_inv, A_rounded and A_rounded_row_norms"
-    // But: "A next todo would be to apply lazy computations for both A_rounded and A_rounded_row_norms 
-    //       by computing and storing only the vectors and norms for the facets the walk hits"
-    SparseRowMT _A;              // Original sparse A (never transformed)
+
+     // Updated member variables for corrected approach
+    SparseRowMT _A;              // Original sparse A
     VT _b;                       // Original b vector  
-    SparseMT _L_inv;             // L^T where H = L * L^T (not H^{-1}) 
+    SparseMT _L;                 // L where H^(-1) = L * L^T (lower triangular)
+    VT _b_scaled;                // b vector (unchanged for now)
     
-    // Walk state (same as uniform billiard walk for compatibility)
-    // From conversation: "keep the structure and everything the same as for the uniform billiard walk"
+    // Keep the rest for compatibility
     NT _Len;
     Point _p;
     Point _v;
     NT _lambda_prev;
     VT _lambdas;
     VT _Av;
-
-    SparseMT _L;                         // lower‑triangular   (H = L·Lᵀ) 
-    VT       _b_scaled;              // b  divided by those norms
-    VT       _row_norm;
-    parameters _param; 
-    MT _A_rounded;
+    parameters _param;
+    MT _original_A_dense;  // Store for comparison
+    VT _original_b;        // Store for comparison
 
 };
 
