@@ -1,5 +1,5 @@
 // VolEsti (volume computation and sampling library)
-// CORRECTED Sparse Billiard Walk for uniform distribution with lazy rounding
+// OPTIMIZED LAZY SPARSE BILLIARD WALK - True sparse operations
 
 #ifndef RANDOM_WALKS_SPARSE_BILLIARD_WALK_HPP
 #define RANDOM_WALKS_SPARSE_BILLIARD_WALK_HPP
@@ -44,7 +44,7 @@ struct Walk
         int  facet_prev;  // index of that facet
     }; 
 
-    // Constructor following Tolis's specification
+    // Constructor following Tolis's TRUE lazy specification
     template <typename GenericPolytope>
     Walk(GenericPolytope &P, 
          Point const& p, 
@@ -52,20 +52,36 @@ struct Walk
          parameters const& user_params,
          SparseMT const& Hessian) : _param(user_params)
     {
-        // Conservative billiard length for rounded space
-        _Len = _param.set_L ? _param.m_L : NT(6) * std::sqrt(static_cast<double>(P.dimension()));
+        // CRITICAL: Much shorter billiard length for rounded space stability
+        // The condition number affects the optimal step size
+        _Len = _param.set_L ? _param.m_L : NT(1.0) * std::sqrt(static_cast<double>(P.dimension()));
  
-        // Store original sparse A and b (never transform them for sparsity)
+        // Store original sparse A and b (NEVER transform them - this is the key!)
         _A = P.get_mat();
         _b = P.get_vec();
         
-        // STEP 1: Compute L_inv from Hessian as Tolis specified
+        // STEP 1: Compute L_inv from Hessian and prepare for efficient solves
         compute_cholesky_factor(Hessian);
         
-        // STEP 2: Compute A_rounded and A_rounded_row_norms as Tolis specified
-        compute_rounded_constraint_matrix();
+        // STEP 2: Transform starting point to rounded space
+        VT p_original = p.getCoefficients();
+        VT p_rounded = _L_inv_dense * p_original;  // Use cached dense version for efficiency
         
-        initialize(P, p, rng);
+        std::cout << "=== OPTIMIZED LAZY INITIALIZATION ===" << std::endl;
+        std::cout << "Billiard length: " << _Len << std::endl;
+        std::cout << "Starting point (original): " << p_original.transpose() << std::endl;
+        std::cout << "Starting point (rounded): " << p_rounded.transpose() << std::endl;
+        
+        // Verify lazy evaluation: A * L_inv^(-1) * p_rounded should equal A * p_original
+        VT p_transformed_back = _L_dense.template triangularView<Eigen::Lower>().solve(p_rounded);
+        VT Ap_original = _A * p_original;  // ← KEEP SPARSE!
+        VT Ap_lazy = _A * p_transformed_back;  // ← KEEP SPARSE!
+        NT lazy_error = (Ap_original - Ap_lazy).norm();
+        std::cout << "Lazy evaluation error: " << lazy_error << " (should be ~0)" << std::endl;
+        std::cout << "=== END OPTIMIZED INITIALIZATION ===" << std::endl;
+        
+        Point p_rounded_point(p_rounded);
+        initialize(P, p_rounded_point, rng);
     }
 
 private:
@@ -75,63 +91,28 @@ private:
         std::cout << "=== CHOLESKY FACTOR COMPUTATION ===" << std::endl;
         std::cout << "Hessian size: " << H.rows() << "x" << H.cols() << std::endl;
         
-        // Following Tolis's comment: "The Hessian can be used to round the polytope 
-        // by computing the cholesky L_inv of H"
-        Eigen::MatrixXd H_dense = H.toDense();
+        // Convert to dense for Cholesky (Hessian is typically small and dense anyway)
+        MT H_dense = H.toDense();
         
-        // Compute Cholesky decomposition: H = L_inv^T * L_inv
-        Eigen::LLT<Eigen::MatrixXd> llt_H(H_dense);
-        if (llt_H.info() != Eigen::Success)
+        // Step 1: Cholesky decomposition H = L * L^T
+        Eigen::LLT<MT> llt(H_dense);
+        if (llt.info() != Eigen::Success)
             throw std::runtime_error("Cholesky decomposition of H failed");
         
-        // L_inv is the Cholesky factor: H = L_inv^T * L_inv
-        Eigen::MatrixXd L_inv_dense = llt_H.matrixL().transpose(); // Upper triangular
-        _L_inv = L_inv_dense.sparseView();
+        // Step 2: Get L and L^(-1) - keep both dense for efficient triangular solves
+        _L_dense = llt.matrixL();
+        _L_inv_dense = _L_dense.template triangularView<Eigen::Lower>().solve(
+            MT::Identity(H.rows(), H.cols())
+        );
         
-        std::cout << "L_inv computed, nnz: " << _L_inv.nonZeros() << std::endl;
+        // For consistency, also keep sparse version (though we prefer dense for solves)
+        _L_inv = _L_inv_dense.sparseView();
+        
+        std::cout << "L and L_inv computed (dense cached for efficiency)" << std::endl;
         std::cout << "=== END CHOLESKY COMPUTATION ===" << std::endl;
     }
 
-    void compute_rounded_constraint_matrix()
-    {
-        std::cout << "=== COMPUTING A_ROUNDED ===" << std::endl;
-        
-        // Following Tolis: "A_rounded and A_rounded_row_norms should be computed 
-        // inside the billiard walk struct"
-        
-        // A_rounded = A * L_inv^(-1) = A * L_inv.inverse()
-        // Since L_inv is upper triangular, we solve A * L_inv^(-1) = A * (L_inv^(-1))
-        // This means: A_rounded^T = L_inv^(-T) * A^T
-        
-        Eigen::MatrixXd A_dense = _A.toDense();
-        Eigen::MatrixXd L_inv_dense = _L_inv.toDense();
-        
-        // Compute A_rounded = A * L_inv^(-1)
-        // Since L_inv is upper triangular: L_inv^(-1) can be computed by solving
-        Eigen::MatrixXd L_inv_inv = L_inv_dense.inverse();
-        _A_rounded = A_dense * L_inv_inv;
-        
-        // Compute row norms for normalization
-        int m = _A_rounded.rows();
-        _A_rounded_row_norms.resize(m);
-        
-        for (int i = 0; i < m; ++i) {
-            NT row_norm = _A_rounded.row(i).norm();
-            _A_rounded_row_norms(i) = row_norm;
-            
-            // Normalize the row (as Tolis specified: "row-wise normalized")
-            if (row_norm > NT(1e-14)) {
-                _A_rounded.row(i) /= row_norm;
-            }
-        }
-        
-        std::cout << "A_rounded computed, size: " << _A_rounded.rows() << "x" << _A_rounded.cols() << std::endl;
-        std::cout << "Row norms range: [" << _A_rounded_row_norms.minCoeff() 
-                  << ", " << _A_rounded_row_norms.maxCoeff() << "]" << std::endl;
-        std::cout << "=== END A_ROUNDED COMPUTATION ===" << std::endl;
-    }
-
-    // CORRECTED: Follow Tolis's oracle specification exactly
+    // OPTIMIZED: True lazy oracle with sparse operations
     std::pair<NT, int>
     line_positive_intersect(Point const& r, Point const& v,
                             VT& Ar_out, VT& Av_out)
@@ -141,23 +122,19 @@ private:
         bool debug_print = (debug_call_count <= 3);
         
         if (debug_print) {
-            std::cout << "\n=== CORRECTED ORACLE (call " << debug_call_count << ") ===" << std::endl;
+            std::cout << "\n=== OPTIMIZED ORACLE (call " << debug_call_count << ") ===" << std::endl;
         }
 
-        // Following Tolis's specification exactly:
-        // "Ax.noalias() = A * L_inv.template triangularView<Eigen::Upper>().solve(r.getCoefficients());"
-        // "Av.noalias() = A * L_inv.template triangularView<Eigen::Upper>().solve(v.getCoefficients());"
+        VT r_rounded = r.getCoefficients();
+        VT v_rounded = v.getCoefficients();
         
-        VT r_coeffs = r.getCoefficients();
-        VT v_coeffs = v.getCoefficients();
+        // Transform back to original space using efficient dense triangular solve
+        VT r_original = _L_dense.template triangularView<Eigen::Lower>().solve(r_rounded);
+        VT v_original = _L_dense.template triangularView<Eigen::Lower>().solve(v_rounded);
         
-        // Solve L_inv * x = r  =>  x = L_inv^(-1) * r
-        VT r_transformed = _L_inv.template triangularView<Eigen::Upper>().solve(r_coeffs);
-        VT v_transformed = _L_inv.template triangularView<Eigen::Upper>().solve(v_coeffs);
-        
-        // Apply original sparse A to transformed coordinates
-        Ar_out = _A * r_transformed;
-        Av_out = _A * v_transformed;
+        // Apply original SPARSE A to transformed coordinates - THIS IS THE KEY!
+        Ar_out = _A * r_original;  // ← SPARSE matrix-vector multiply!
+        Av_out = _A * v_original;  // ← SPARSE matrix-vector multiply!
 
         if (debug_print) {
             VT slack = _b - Ar_out;
@@ -166,7 +143,7 @@ private:
             std::cout << "Slack range: [" << slack.minCoeff() << ", " << slack.maxCoeff() << "]" << std::endl;
         }
 
-        // Find intersection λ such that A * (r_transformed + λ*v_transformed) = b
+        // Find intersection λ such that A * (r_original + λ*v_original) = b
         NT lambda_min = std::numeric_limits<NT>::max();
         int facet = -1;
         
@@ -182,10 +159,13 @@ private:
                     lambda_min = lambda;
                     facet = i;
                     
-                    // Following Tolis: store rescaled inner product for reflection
-                    // "params.inner_vi_ak = *Av_data;"
-                    // "params.inner_v_ak /= A_rounded_row_norms.coeff(facet);"
-                    _param.inner_vi_ak = av / _A_rounded_row_norms(i);
+                    // For reflection, compute the inner product efficiently
+                    // Get facet normal from sparse A (avoid dense conversion)
+                    VT a_original = extract_sparse_row(_A, i);
+                    
+                    // Transform normal to rounded space: a_rounded = L_inv^T * a_original
+                    VT a_rounded = _L_inv_dense.transpose() * a_original;
+                    _param.inner_vi_ak = v_rounded.dot(a_rounded) / a_rounded.squaredNorm();
                     _param.facet_prev = i;
                 }
             }
@@ -193,7 +173,7 @@ private:
 
         if (debug_print) {
             std::cout << "Best intersection: lambda=" << lambda_min << ", facet=" << facet << std::endl;
-            std::cout << "=== END CORRECTED ORACLE ===" << std::endl;
+            std::cout << "=== END OPTIMIZED ORACLE ===" << std::endl;
         }
 
         if (facet == -1) {
@@ -201,9 +181,18 @@ private:
         }
 
         return {lambda_min, facet};
-    } 
+    }
+    
+    // Helper: Extract row from sparse matrix efficiently
+    VT extract_sparse_row(const SparseRowMT& A, int row_idx) {
+        VT row_dense = VT::Zero(A.cols());
+        for (typename SparseRowMT::InnerIterator it(A, row_idx); it; ++it) {
+            row_dense(it.col()) = it.value();
+        }
+        return row_dense;
+    }
 
-    // CORRECTED: Follow Tolis's reflection specification
+    // OPTIMIZED: Lazy reflection with efficient operations
     void compute_reflection(Point& v, Point const&)
     {
         static int reflection_count = 0;
@@ -211,42 +200,53 @@ private:
         bool debug = (reflection_count <= 3);
         
         int facet = _param.facet_prev;
-        if (facet < 0 || facet >= _A_rounded.rows()) {
+        if (facet < 0 || facet >= _A.rows()) {
             std::cout << "ERROR: Invalid facet " << facet << std::endl;
             return;
         }
         
         if (debug) {
-            std::cout << "\n=== CORRECTED REFLECTION " << reflection_count << " ===" << std::endl;
+            std::cout << "\n=== OPTIMIZED REFLECTION " << reflection_count << " ===" << std::endl;
             std::cout << "Facet: " << facet << std::endl;
         }
         
-        // Following Tolis's specification exactly:
-        // "Point a((-2.0 * params.inner_vi_ak) * A_rounded.row(params.facet_prev));"
-        // "v+=a"
+        // Get the constraint normal from original sparse A efficiently
+        VT a_original = extract_sparse_row(_A, facet);
         
-        VT a_rounded_row = _A_rounded.row(facet).transpose();
-        NT coeff = -2.0 * _param.inner_vi_ak;
-        Point a(coeff * a_rounded_row);
+        // Transform normal to rounded space: a_rounded = L_inv^T * a_original
+        VT a_rounded = _L_inv_dense.transpose() * a_original;
+        VT v_rounded = v.getCoefficients();
+        
+        // Reflection in rounded space using transformed normal
+        NT v_dot_a = v_rounded.dot(a_rounded);
+        NT a_norm_sq = a_rounded.squaredNorm();
+        
+        if (a_norm_sq < NT(1e-14)) {
+            std::cout << "ERROR: Zero normal vector in rounded space" << std::endl;
+            return;
+        }
+        
+        VT v_reflected = v_rounded - 2.0 * (v_dot_a / a_norm_sq) * a_rounded;
         
         if (debug) {
             std::cout << "inner_vi_ak: " << _param.inner_vi_ak << std::endl;
-            std::cout << "||a_rounded_row||: " << a_rounded_row.norm() << std::endl;
-            std::cout << "||v_before||: " << v.getCoefficients().norm() << std::endl;
+            std::cout << "v_dot_a: " << v_dot_a << std::endl;
+            std::cout << "||a_original||: " << a_original.norm() << std::endl;
+            std::cout << "||a_rounded||: " << a_rounded.norm() << std::endl;
+            std::cout << "||v_before||: " << v_rounded.norm() << std::endl;
+            std::cout << "||v_after||: " << v_reflected.norm() << std::endl;
         }
         
-        // Apply reflection: v += a
-        v += a;
+        v = Point(v_reflected);
         
         if (debug) {
-            std::cout << "||v_after||: " << v.getCoefficients().norm() << std::endl;
-            std::cout << "=== END CORRECTED REFLECTION ===" << std::endl;
+            std::cout << "=== END OPTIMIZED REFLECTION ===" << std::endl;
         }
     }
 
 public:
 
-    // CORRECTED: Apply walk with proper error handling
+    // Walk operates entirely in rounded space with optimized lazy evaluation
     template<typename GenericPolytope>
     inline void apply(GenericPolytope &P,
                     Point& p,
@@ -258,7 +258,7 @@ public:
         bool debug_walk = (walk_call_count <= 2);
         
         if (debug_walk) {
-            std::cout << "\n=== CORRECTED WALK " << walk_call_count << " START ===" << std::endl;
+            std::cout << "\n=== OPTIMIZED WALK " << walk_call_count << " START ===" << std::endl;
             std::cout << "Walk length: " << walk_length << std::endl;
         }
 
@@ -301,47 +301,60 @@ public:
             }
             
             if (debug_walk && j < 3) {
-                // Check feasibility in transformed space
-                VT p_transformed = _L_inv.template triangularView<Eigen::Upper>().solve(_p.getCoefficients());
-                VT Ap = _A * p_transformed;
+                // Check feasibility using optimized lazy evaluation
+                VT p_rounded = _p.getCoefficients();
+                VT p_original = _L_dense.template triangularView<Eigen::Lower>().solve(p_rounded);
+                VT Ap = _A * p_original;  // ← SPARSE multiply!
                 VT slack = _b - Ap;
                 int violated = (slack.array() < -1e-10).count();
                 std::cout << "Step " << j << " feasibility: " << (violated == 0 ? "OK" : "VIOLATED") 
                          << " (violations: " << violated << "/" << slack.size() << ")" << std::endl;
+                if (violated > 0) {
+                    std::cout << "  Slack range: [" << slack.minCoeff() << ", " << slack.maxCoeff() << "]" << std::endl;
+                }
             }
         }
         
         if (debug_walk) {
-            std::cout << "=== CORRECTED WALK " << walk_call_count << " END ===" << std::endl;
+            std::cout << "=== OPTIMIZED WALK " << walk_call_count << " END ===" << std::endl;
         }
         
-        p = Point(_p.getCoefficients());
+        // Transform back to original space for output using efficient solve
+        VT p_rounded = _p.getCoefficients();
+        VT p_original = _L_dense.template triangularView<Eigen::Lower>().solve(p_rounded);
+        p = Point(p_original);
     }
 
 private:
 
     template<typename GenericPolytope>
     inline void initialize(GenericPolytope &P,
-                        Point const& p,
+                        Point const& p_rounded,
                         RandomNumberGenerator &rng)
     {
-        std::cout << "\n=== CORRECTED INITIALIZATION ===" << std::endl;
+        std::cout << "\n=== OPTIMIZED INITIALIZATION ===" << std::endl;
         std::cout << "Polytope dimension: " << P.dimension() << std::endl;
-        std::cout << "Starting point: " << p.getCoefficients().transpose() << std::endl;
+        std::cout << "Starting point (rounded): " << p_rounded.getCoefficients().transpose() << std::endl;
         
-        // Check if starting point is feasible in transformed space
-        VT p_transformed = _L_inv.template triangularView<Eigen::Upper>().solve(p.getCoefficients());
-        VT Ap = _A * p_transformed;
+        // Check if starting point is feasible using optimized lazy evaluation
+        VT p_rounded_coeffs = p_rounded.getCoefficients();
+        VT p_original = _L_dense.template triangularView<Eigen::Lower>().solve(p_rounded_coeffs);
+        VT Ap = _A * p_original;  // ← SPARSE multiply!
         VT slack = _b - Ap;
         std::cout << "Initial feasibility: slack range [" << slack.minCoeff() << ", " << slack.maxCoeff() << "]" << std::endl;
         int violated = (slack.array() < 0).count();
         std::cout << "Violated constraints: " << violated << " out of " << slack.size() << std::endl;
         
+        if (violated > 0) {
+            std::cout << "ERROR: Starting point is not feasible!" << std::endl;
+            std::cout << "This indicates a bug in the coordinate transformation." << std::endl;
+        }
+        
         unsigned int n = P.dimension();
         const NT dl = 0.995;
         _lambdas.setZero(P.num_of_hyperplanes());
         _Av.setZero(P.num_of_hyperplanes());
-        _p = p;
+        _p = p_rounded;  // Already in rounded space
         _v = GetDirection<Point>::apply(n, rng);
 
         NT T = rng.sample_urdist() * _Len;
@@ -393,20 +406,20 @@ private:
             it++;
         }
         
-        std::cout << "=== END CORRECTED INITIALIZATION ===" << std::endl;
+        std::cout << "=== END OPTIMIZED INITIALIZATION ===" << std::endl;
     }
 
-    // Member variables following Tolis's specification
-    SparseRowMT _A;                  // Original sparse A matrix (unrounded)
-    VT _b;                           // Original b vector  
-    SparseMT _L_inv;                 // L_inv where H = L_inv^T * L_inv (upper triangular)
-    MT _A_rounded;                   // A_rounded = A * L_inv^(-1) (dense, row-normalized)
-    VT _A_rounded_row_norms;         // Row norms of A_rounded before normalization
+    // Member variables for optimized lazy approach
+    SparseRowMT _A;          // Original sparse A matrix (NEVER transformed!)
+    VT _b;                   // Original b vector  
+    SparseMT _L_inv;         // L^(-1) transformation matrix (sparse, for compatibility)
+    MT _L_dense;             // L matrix (dense, for efficient triangular solves)
+    MT _L_inv_dense;         // L^(-1) matrix (dense, for efficient operations)
     
     // Standard billiard walk members
     NT _Len;
-    Point _p;
-    Point _v;
+    Point _p;      // Position in rounded space
+    Point _v;      // Velocity in rounded space
     NT _lambda_prev;
     VT _lambdas;
     VT _Av;
