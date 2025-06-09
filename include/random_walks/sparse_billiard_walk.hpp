@@ -127,21 +127,18 @@ private:
             std::cout << "\n=== CORRECTED INTERSECTION (call " << debug_call_count << ") ===" << std::endl;
         }
 
-        // Step 1: Apply coordinate transformation using triangular solve
-        // From comment: "Ax = A * L_inv.template triangularView<Eigen::Upper>().solve(x)"
-        // But L is lower triangular, so we need to solve L * y = x for y
-        // This gives us y = L^(-1) * x, which is the rounded coordinate
+        // Step 1: Apply coordinate transformation
+        // CRITICAL FIX: We need x_rounded = L * x_original (not L^(-1) * x_original)
+        // This is because in the rounded space, the constraint is (A * L^(-1)) * x_rounded <= b
+        // So if x_original satisfies A * x_original <= b, then x_rounded = L * x_original
+        // satisfies (A * L^(-1)) * x_rounded = A * L^(-1) * L * x_original = A * x_original <= b
         
         VT r_original = r.getCoefficients();
         VT v_original = v.getCoefficients();
         
-        // Solve L * r_rounded = r_original for r_rounded
-        VT r_rounded = r_original;
-        VT v_rounded = v_original;
-        
-        // CRITICAL: Use lower triangular solve since L is lower triangular
-        _L.template triangularView<Eigen::Lower>().solveInPlace(r_rounded);
-        _L.template triangularView<Eigen::Lower>().solveInPlace(v_rounded);
+        // Apply L transformation (not L^(-1))
+        VT r_rounded = _L * r_original;
+        VT v_rounded = _L * v_original;
         
         if (debug_print) {
             std::cout << "Lazy coordinate transformation:" << std::endl;
@@ -150,22 +147,17 @@ private:
             std::cout << "  Transformation ratio: " << r_rounded.norm() / r_original.norm() << std::endl;
         }
 
-        // Step 2: Apply constraints in original space to transformed coordinates
-        // This preserves sparsity of A!
-        Ar_out = _A * r_rounded;
-        Av_out = _A * v_rounded;
+        // Step 2: Apply constraints in original space to original coordinates
+        // This is the key insight: we evaluate A * x_original, not A * x_rounded
+        Ar_out = _A * r_original;
+        Av_out = _A * v_original;
 
         if (debug_print) {
-            // Verify feasibility after transformation
-            VT slack_transformed = _b_scaled - Ar_out;
-            int violated_transformed = (slack_transformed.array() < -1e-10).count();
-            std::cout << "Transformed feasibility: violated=" << violated_transformed << "/" << slack_transformed.size() << std::endl;
-            std::cout << "Slack range: [" << slack_transformed.minCoeff() << ", " << slack_transformed.maxCoeff() << "]" << std::endl;
-            
-            // Double-check: verify point is feasible in original space
-            VT Ar_original_check = _A * r_original;
-            VT slack_original_check = _b - Ar_original_check;
-            std::cout << "Original space check: violated=" << (slack_original_check.array() < -1e-10).count() << "/" << slack_original_check.size() << std::endl;
+            // Verify feasibility
+            VT slack = _b - Ar_out;
+            int violated = (slack.array() < -1e-10).count();
+            std::cout << "Feasibility check: violated=" << violated << "/" << slack.size() << std::endl;
+            std::cout << "Slack range: [" << slack.minCoeff() << ", " << slack.maxCoeff() << "]" << std::endl;
         }
 
         // Step 3: Find intersection λ such that A * (r + λ*v) = b
@@ -178,7 +170,7 @@ private:
             NT av = Av_out(i);
             if (std::abs(av) < NT(1e-12)) continue;
 
-            NT lambda = (_b_scaled(i) - Ar_out(i)) / av;
+            NT lambda = (_b(i) - Ar_out(i)) / av;
             
             if (debug_print && i < 5) {
                 std::cout << "Constraint " << i << ": lambda=" << lambda << " (av=" << av << ")" << std::endl;
@@ -189,7 +181,14 @@ private:
                 if (lambda < lambda_min) {
                     lambda_min = lambda;
                     facet = i;
-                    _param.inner_vi_ak = av;
+                    // Store the inner product in the rounded space for reflection
+                    // We need <v_rounded, a_rounded> where a_rounded = L^T * a_i
+                    VT a_i(_A.cols());
+                    for (int j = 0; j < _A.cols(); ++j) {
+                        a_i(j) = _A.coeff(i, j);
+                    }
+                    VT a_rounded = _L.transpose() * a_i;
+                    _param.inner_vi_ak = v_rounded.dot(a_rounded) / a_rounded.squaredNorm();
                     _param.facet_prev = i;
                 }
             }
@@ -206,9 +205,9 @@ private:
         }
 
         return {lambda_min, facet};
-    }
+    } 
 
-    // CRITICAL FIX 4: Corrected reflection oracle
+    
     void compute_reflection(Point& v, Point& u)
     {
         NT coef = -2.0 * _param.inner_vi_ak;
@@ -219,28 +218,39 @@ private:
             return;
         }
         
-        // Get the constraint normal from original A (preserves sparsity)
+        // Get the constraint normal from original A
         VT a_facet(_A.cols());
         for (int j = 0; j < _A.cols(); ++j) {
             a_facet(j) = _A.coeff(facet, j);
         }
         
-        // Transform normal to rounded space: a_rounded = L^(-T) * a_facet
-        // Since L is lower triangular, L^(-T) is upper triangular
-        // Solve L^T * a_rounded = a_facet for a_rounded
-        VT a_rounded = a_facet;
-        _L.transpose().template triangularView<Eigen::Upper>().solveInPlace(a_rounded);
+        // Transform normal to rounded space: a_rounded = L^T * a_facet
+        VT a_rounded = _L.transpose() * a_facet;
         
-        // Apply reflection in rounded space
-        Point reflection(coef * a_rounded);
-        v += reflection;
-        u += reflection;
+        // Normalize the transformed normal
+        a_rounded = a_rounded / a_rounded.norm();
+        
+        // Apply reflection in original space
+        // v and u are in original space, so we need to reflect using the original normal
+        // But the coefficient was computed in rounded space, so we need to adjust
+        VT v_original = v.getCoefficients();
+        VT u_original = u.getCoefficients();
+        
+        // Project velocity onto the original normal
+        NT v_dot_a = v_original.dot(a_facet) / a_facet.squaredNorm();
+        
+        // Reflect in original space
+        v_original -= 2.0 * v_dot_a * a_facet;
+        u_original -= 2.0 * v_dot_a * a_facet;
+        
+        v = Point(v_original);
+        u = Point(u_original);
         
         static int reflection_count = 0;
         reflection_count++;
         if (reflection_count <= 3) {
             std::cout << "Corrected reflection " << reflection_count << ": facet=" << facet 
-                      << ", coef=" << coef << ", ||a_rounded||=" << a_rounded.norm() << std::endl;
+                    << ", v_dot_a=" << v_dot_a << ", ||a_facet||=" << a_facet.norm() << std::endl;
         }
     }
 
