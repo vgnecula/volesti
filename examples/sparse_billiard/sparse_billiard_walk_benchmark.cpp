@@ -373,7 +373,7 @@ void run_benchmark_case(std::vector<BenchmarkResults>& all_results,
 void run_comprehensive_benchmark() {
     std::vector<BenchmarkResults> all_results;
     unsigned int num_samples = 5000;
-    
+    /*
     // Test 1: Small order polytope (10D) with sparse relations
     run_benchmark_case(all_results, 10, 25, num_samples, "Test 1: 10D Order Polytope (Sparse)");
     
@@ -391,7 +391,8 @@ void run_comprehensive_benchmark() {
     
     // Test 6: Ultra high-dimensional polytope (50D) with sparse relations
     run_benchmark_case(all_results, 50, 200, num_samples, "Test 6: 50D Order Polytope (Sparse)");
-    
+    */
+    run_benchmark_case(all_results, 100, 200, num_samples, "Test 100D Ultra Sparse: 200 constraints");
     print_results(all_results);
 }
 
