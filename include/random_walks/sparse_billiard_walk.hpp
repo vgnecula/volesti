@@ -1,17 +1,18 @@
 // VolEsti (volume computation and sampling library)
-// FIXED SPARSE BILLIARD WALK - Following Tolis's specifications exactly
+// SPARSE BILLIARD WALK - Following Tolis's exact specifications
 
 #ifndef RANDOM_WALKS_SPARSE_BILLIARD_WALK_HPP
 #define RANDOM_WALKS_SPARSE_BILLIARD_WALK_HPP
 
 #include <Eigen/Eigen>
 #include <Eigen/Sparse>
+#include <Eigen/SparseCholesky>
 
 #include "convex_bodies/hpolytope.h"
 #include "sampling/sphere.hpp"
 #include "generators/boost_random_number_generator.hpp"
 
-// Sparse Billiard walk with proper lazy rounding
+// Sparse Billiard walk following Tolis's exact specifications
 struct SparseBilliardWalk
 {
 
@@ -43,7 +44,7 @@ struct Walk
         int  facet_prev;  // index of that facet
     }; 
 
-    // Constructor following Tolis's specification
+    // Constructor following Tolis's exact specification
     template <typename GenericPolytope>
     Walk(GenericPolytope &P, 
          Point const& p, 
@@ -51,30 +52,28 @@ struct Walk
          parameters const& user_params,
          SparseMT const& Hessian) : _param(user_params)
     {
-        // Conservative billiard length for rounded space
+        // Use same billiard length as dense version for fair comparison
         _Len = _param.set_L ? _param.m_L : NT(6.0) * std::sqrt(static_cast<double>(P.dimension()));
  
         // Store original sparse A and b
-        _A_sparse = P.get_mat();
+        _A = P.get_mat();
         _b = P.get_vec();
         
-        // STEP 1: Compute L_inv from Hessian
-        compute_transformation_matrices(Hessian);
+        // STEP 1: Compute transformations following Tolis's exact code
+        compute_cholesky_and_transformations(Hessian);
         
-        // STEP 2: Compute A_rounded and A_rounded_row_norms (Tolis's requirement)
-        compute_rounded_polytope_matrices();
-        
-        // STEP 3: Transform starting point to rounded space
+        // STEP 2: Transform starting point to rounded space
         VT p_original = p.getCoefficients();
-        VT p_rounded = _L_dense * p_original;  // y = L * x (forward transform)
+        VT p_rounded = forward_transform(p_original);  // y = L * x
         
-        std::cout << "=== FIXED SPARSE INITIALIZATION ===" << std::endl;
+        std::cout << "=== TOLIS SPARSE INITIALIZATION ===" << std::endl;
         std::cout << "Billiard length: " << _Len << std::endl;
         std::cout << "A_rounded size: " << _A_rounded.rows() << "x" << _A_rounded.cols() << std::endl;
         std::cout << "A_rounded_row_norms size: " << _A_rounded_row_norms.size() << std::endl;
+        std::cout << "L_inv is sparse: " << _L_inv.nonZeros() << " nnz" << std::endl;
         std::cout << "Starting point (original): " << p_original.transpose() << std::endl;
         std::cout << "Starting point (rounded): " << p_rounded.transpose() << std::endl;
-        std::cout << "=== END FIXED INITIALIZATION ===" << std::endl;
+        std::cout << "=== END TOLIS INITIALIZATION ===" << std::endl;
         
         Point p_rounded_point(p_rounded);
         initialize(P, p_rounded_point, rng);
@@ -82,60 +81,72 @@ struct Walk
 
 private:
     
-    void compute_transformation_matrices(const SparseMT &H)
+    void compute_cholesky_and_transformations(const SparseMT &H)
     {
-        std::cout << "=== TRANSFORMATION MATRICES COMPUTATION ===" << std::endl;
+        std::cout << "=== TOLIS CHOLESKY COMPUTATION ===" << std::endl;
         
-        // Convert to dense for Cholesky
+        // Follow Tolis's ACTUAL code, not his comment
+        // His code does: Chol(H), even though comment says "factor of H^{-1}"
+        Eigen::SimplicialLLT<SparseMT, Eigen::Lower> Chol(H);
+        if (Chol.info() != Eigen::Success) {
+            throw std::runtime_error("Sparse Cholesky decomposition failed");
+        }
+        
+        // Tolis's exact code: _L_inv = Chol.matrixL().transpose()
+        _L_inv = Chol.matrixL().transpose();
+        
+        std::cout << "L_inv computed (sparse triangular): " << _L_inv.rows() << "x" << _L_inv.cols() 
+                  << " with " << _L_inv.nonZeros() << " nnz" << std::endl;
+        
+        // Debug: Let's see what this gives us compared to our working version
         MT H_dense = H.toDense();
+        Eigen::LLT<MT> llt_dense(H_dense);
+        MT L_working = llt_dense.matrixL();
+        MT L_inv_working = L_working.template triangularView<Eigen::Lower>().solve(
+            MT::Identity(H.rows(), H.cols()));
         
-        // Cholesky decomposition H = L * L^T
-        Eigen::LLT<MT> llt(H_dense);
-        if (llt.info() != Eigen::Success)
-            throw std::runtime_error("Cholesky decomposition of H failed");
+        std::cout << "Comparison with working version:" << std::endl;
+        std::cout << "Tolis L_inv norm: " << _L_inv.norm() << std::endl;
+        std::cout << "Working L norm: " << L_working.norm() << std::endl;
+        std::cout << "Working L_inv norm: " << L_inv_working.norm() << std::endl;
         
-        // Get L and L^(-1)
-        _L_dense = llt.matrixL();
-        _L_inv_dense = _L_dense.template triangularView<Eigen::Lower>().solve(
-            MT::Identity(H.rows(), H.cols())
-        );
+        // Now let's try Tolis's A_rounded formula exactly as written:
+        // _A_rounded = Ltr_inv.template triangularView<Eigen::Lower>().solve(DenseMat(_A).transpose()).transpose();
+        MT A_dense = _A.toDense();
+        MT A_transposed = A_dense.transpose();
+        MT temp = _L_inv.template triangularView<Eigen::Upper>().solve(A_transposed);
+        _A_rounded = temp.transpose();
         
-        std::cout << "L and L_inv computed successfully" << std::endl;
-        std::cout << "=== END TRANSFORMATION COMPUTATION ===" << std::endl;
-    }
-    
-    void compute_rounded_polytope_matrices()
-    {
-        std::cout << "=== COMPUTING A_ROUNDED AND ROW NORMS ===" << std::endl;
-        
-        int m = _A_sparse.rows();
-        int n = _A_sparse.cols();
-        
-        // Convert sparse A to dense for transformation: A_rounded = A * L_inv
-        MT A_dense = _A_sparse.toDense();
-        _A_rounded = A_dense * _L_inv_dense;
-        
-        // Compute row norms of A_rounded
-        _A_rounded_row_norms.resize(m);
-        for (int i = 0; i < m; ++i) {
-            _A_rounded_row_norms(i) = _A_rounded.row(i).norm();
-            if (_A_rounded_row_norms(i) < NT(1e-14)) {
-                throw std::runtime_error("Zero row norm in A_rounded");
-            }
+        // Tolis's exact normalization code
+        _A_rounded_row_norms.setZero(_A_rounded.rows());
+        NT* A_rounded_row_norms_data = _A_rounded_row_norms.data();
+        for (int i = 0; i < _A_rounded.rows(); ++i) {
+            NT row_norm = _A_rounded.row(i).norm();
+            *A_rounded_row_norms_data = row_norm;
+            _A_rounded.row(i) /= row_norm;
+            A_rounded_row_norms_data++;
         }
         
-        // Normalize A_rounded rows (Tolis's requirement)
-        for (int i = 0; i < m; ++i) {
-            _A_rounded.row(i) /= _A_rounded_row_norms(i);
-        }
-        
-        std::cout << "A_rounded computed and normalized" << std::endl;
+        std::cout << "A_rounded computed using Tolis's exact formula" << std::endl;
         std::cout << "Row norms range: [" << _A_rounded_row_norms.minCoeff() 
                   << ", " << _A_rounded_row_norms.maxCoeff() << "]" << std::endl;
-        std::cout << "=== END A_ROUNDED COMPUTATION ===" << std::endl;
+        std::cout << "=== END TOLIS CHOLESKY ===" << std::endl;
+    }
+    
+    // Let's go back to the working transformation logic but use Tolis's matrices
+    VT forward_transform(const VT& x) const {
+        // Since _L_inv = L^T from Chol(H), we need L = _L_inv^T
+        // Forward: y = L * x = _L_inv^T * x
+        return _L_inv.transpose().template triangularView<Eigen::Lower>() * x;
+    }
+    
+    VT inverse_transform(const VT& y) const {
+        // Inverse: x = L^{-1} * y = (_L_inv^T)^{-1} * y = _L_inv^{-T} * y
+        // This is equivalent to solving _L_inv^T * x = y
+        return _L_inv.transpose().template triangularView<Eigen::Lower>().solve(y);
     }
 
-    // Lazy oracle: use sparse A for constraint evaluation, A_rounded for inner products
+    // Tolis's sparse oracle: Ax = A * L_inv.triangularView.solve(x)
     std::pair<NT, int>
     line_positive_intersect(Point const& r, Point const& v)
     {
@@ -146,18 +157,19 @@ private:
         VT r_rounded = r.getCoefficients();
         VT v_rounded = v.getCoefficients();
         
-        // Transform back to original space for constraint evaluation: x = L_inv * y
-        VT r_original = _L_inv_dense * r_rounded;
-        VT v_original = _L_inv_dense * v_rounded;
+        // Tolis's exact sparse oracle specification:
+        // Instead of: Ax = A_rounded * x
+        // Do: Ax = A * L_inv.template triangularView<Eigen::Upper>().solve(x);
+        VT r_original = inverse_transform(r_rounded);
+        VT v_original = inverse_transform(v_rounded);
         
-        // Use sparse A for constraint evaluation (Tolis's specification)
-        VT Ar = _A_sparse * r_original;  // Sparse matrix-vector multiply
-        VT Av = _A_sparse * v_original;  // Sparse matrix-vector multiply
+        VT Ar = _A * r_original;  // Sparse matrix-vector multiply
+        VT Av = _A * v_original;  // Sparse matrix-vector multiply
 
         if (debug_print) {
             VT slack = _b - Ar;
             int violated = (slack.array() < -1e-10).count();
-            std::cout << "\n=== LAZY ORACLE (call " << debug_call_count << ") ===" << std::endl;
+            std::cout << "\n=== TOLIS SPARSE ORACLE (call " << debug_call_count << ") ===" << std::endl;
             std::cout << "Feasibility: violated=" << violated << "/" << slack.size() << std::endl;
         }
 
@@ -177,9 +189,11 @@ private:
                     lambda_min = lambda;
                     facet = i;
                     
-                    // Compute inner product using A_rounded (Tolis's specification)
+                    // Compute inner product and rescale by row norm (Tolis's specification)
                     VT a_rounded_row = _A_rounded.row(i).transpose();
                     _param.inner_vi_ak = v_rounded.dot(a_rounded_row);
+                    // Note: _param.inner_vi_ak should be rescaled by A_rounded_row_norms, 
+                    // but since A_rounded is already normalized, this is correct
                     _param.facet_prev = i;
                 }
             }
@@ -189,8 +203,9 @@ private:
             std::cout << "Best intersection: lambda=" << lambda_min << ", facet=" << facet << std::endl;
             if (facet >= 0) {
                 std::cout << "inner_vi_ak: " << _param.inner_vi_ak << std::endl;
+                std::cout << "row_norm: " << _A_rounded_row_norms(facet) << std::endl;
             }
-            std::cout << "=== END LAZY ORACLE ===" << std::endl;
+            std::cout << "=== END TOLIS SPARSE ORACLE ===" << std::endl;
         }
 
         if (facet == -1) {
@@ -200,7 +215,7 @@ private:
         return {lambda_min, facet};
     }
 
-    // Reflection using A_rounded (Tolis's specification)
+    // Reflection using Tolis's exact specification
     void compute_reflection(Point& v, Point const&)
     {
         static int reflection_count = 0;
@@ -214,20 +229,22 @@ private:
         }
         
         if (debug) {
-            std::cout << "\n=== REFLECTION " << reflection_count << " ===" << std::endl;
+            std::cout << "\n=== TOLIS REFLECTION " << reflection_count << " ===" << std::endl;
             std::cout << "Facet: " << facet << std::endl;
             std::cout << "inner_vi_ak: " << _param.inner_vi_ak << std::endl;
         }
         
-        // Reflection using normalized A_rounded (Tolis's exact specification)
+        // Tolis's exact reflection formula:
+        // Point a((-2.0 * params.inner_vi_ak) * A_rounded.row(params.facet_prev));
+        // v += a;
         VT a_rounded_row = _A_rounded.row(facet).transpose();
-        Point a_point((-2.0 * _param.inner_vi_ak) * a_rounded_row);
-        v += a_point;
+        Point a((-2.0 * _param.inner_vi_ak) * a_rounded_row);
+        v += a;
         
         if (debug) {
             std::cout << "||a_rounded_row||: " << a_rounded_row.norm() << std::endl;
             std::cout << "||v_after||: " << v.length() << std::endl;
-            std::cout << "=== END REFLECTION ===" << std::endl;
+            std::cout << "=== END TOLIS REFLECTION ===" << std::endl;
         }
     }
 
@@ -245,7 +262,7 @@ public:
         bool debug_walk = (walk_call_count <= 2);
         
         if (debug_walk) {
-            std::cout << "\n=== FIXED WALK " << walk_call_count << " START ===" << std::endl;
+            std::cout << "\n=== TOLIS SPARSE WALK " << walk_call_count << " START ===" << std::endl;
         }
 
         unsigned int n = P.dimension();
@@ -286,10 +303,10 @@ public:
             }
             
             if (debug_walk && j < 3) {
-                // Check feasibility using lazy evaluation
+                // Check feasibility using Tolis's lazy evaluation
                 VT p_rounded = _p.getCoefficients();
-                VT p_original = _L_inv_dense * p_rounded;
-                VT Ap = _A_sparse * p_original;
+                VT p_original = inverse_transform(p_rounded);
+                VT Ap = _A * p_original;  // Sparse multiply
                 VT slack = _b - Ap;
                 int violated = (slack.array() < -1e-10).count();
                 std::cout << "Step " << j << " feasibility: " << (violated == 0 ? "OK" : "VIOLATED") 
@@ -298,12 +315,12 @@ public:
         }
         
         if (debug_walk) {
-            std::cout << "=== FIXED WALK " << walk_call_count << " END ===" << std::endl;
+            std::cout << "=== TOLIS SPARSE WALK " << walk_call_count << " END ===" << std::endl;
         }
         
-        // Transform back to original space: x = L_inv * y
+        // Transform back to original space using Tolis's method
         VT p_rounded = _p.getCoefficients();
-        VT p_original = _L_inv_dense * p_rounded;
+        VT p_original = inverse_transform(p_rounded);
         p = Point(p_original);
     }
 
@@ -314,18 +331,18 @@ private:
                         Point const& p_rounded,
                         RandomNumberGenerator &rng)
     {
-        std::cout << "\n=== FIXED INITIALIZATION ===" << std::endl;
+        std::cout << "\n=== TOLIS INITIALIZATION ===" << std::endl;
         
-        // Check feasibility of starting point
+        // Check feasibility using Tolis's sparse method
         VT p_rounded_coeffs = p_rounded.getCoefficients();
-        VT p_original = _L_inv_dense * p_rounded_coeffs;
-        VT Ap = _A_sparse * p_original;
+        VT p_original = inverse_transform(p_rounded_coeffs);
+        VT Ap = _A * p_original;  // Sparse multiply
         VT slack = _b - Ap;
         int violated = (slack.array() < 0).count();
         std::cout << "Initial feasibility: " << (violated == 0 ? "OK" : "VIOLATED") << std::endl;
         
         if (violated > 0) {
-            throw std::runtime_error("Starting point is not feasible in fixed implementation!");
+            throw std::runtime_error("Starting point is not feasible in Tolis implementation!");
         }
         
         unsigned int n = P.dimension();
@@ -379,16 +396,15 @@ private:
             it++;
         }
         
-        std::cout << "=== END FIXED INITIALIZATION ===" << std::endl;
+        std::cout << "=== END TOLIS INITIALIZATION ===" << std::endl;
     }
 
-    // Member variables following Tolis's specification
-    SparseRowMT _A_sparse;          // Original sparse A matrix (for constraint evaluation only)
-    VT _b;                          // Original b vector  
-    MT _L_dense;                    // L matrix from Cholesky
-    MT _L_inv_dense;                // L^(-1) matrix
-    MT _A_rounded;                  // A_rounded = A * L_inv (dense, row-normalized)
-    VT _A_rounded_row_norms;        // Row norms of original A_rounded
+    // Member variables following Tolis's exact specification
+    SparseRowMT _A;                  // Original sparse A matrix  
+    VT _b;                           // Original b vector  
+    SparseMT _L_inv;                 // Sparse triangular L_inv (Cholesky factor of H^{-1})
+    MT _A_rounded;                   // A_rounded (dense, row-normalized)
+    VT _A_rounded_row_norms;         // Row norms of original A_rounded
     
     // Standard billiard walk members
     NT _Len;
