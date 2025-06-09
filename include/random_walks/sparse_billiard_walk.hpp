@@ -1,5 +1,5 @@
 // VolEsti (volume computation and sampling library)
-// OPTIMIZED LAZY SPARSE BILLIARD WALK - True sparse operations
+// CLEAN SPARSE BILLIARD WALK - Correct transformations, simple design
 
 #ifndef RANDOM_WALKS_SPARSE_BILLIARD_WALK_HPP
 #define RANDOM_WALKS_SPARSE_BILLIARD_WALK_HPP
@@ -52,8 +52,7 @@ struct Walk
          parameters const& user_params,
          SparseMT const& Hessian) : _param(user_params)
     {
-        // CRITICAL: Much shorter billiard length for rounded space stability
-        // The condition number affects the optimal step size
+        // Conservative billiard length for rounded space stability
         _Len = _param.set_L ? _param.m_L : NT(1.0) * std::sqrt(static_cast<double>(P.dimension()));
  
         // Store original sparse A and b (NEVER transform them - this is the key!)
@@ -67,7 +66,7 @@ struct Walk
         VT p_original = p.getCoefficients();
         VT p_rounded = _L_dense * p_original;  // CORRECTED: y = L * x (forward transform)
         
-        std::cout << "=== CORRECTED LAZY INITIALIZATION ===" << std::endl;
+        std::cout << "=== CLEAN SPARSE INITIALIZATION ===" << std::endl;
         std::cout << "Billiard length: " << _Len << std::endl;
         std::cout << "Starting point (original): " << p_original.transpose() << std::endl;
         std::cout << "Starting point (rounded): " << p_rounded.transpose() << std::endl;
@@ -78,7 +77,7 @@ struct Walk
         VT Ap_lazy = _A * p_transformed_back;  // ← KEEP SPARSE!
         NT lazy_error = (Ap_original - Ap_lazy).norm();
         std::cout << "Lazy evaluation error: " << lazy_error << " (should be ~0)" << std::endl;
-        std::cout << "=== END CORRECTED INITIALIZATION ===" << std::endl;
+        std::cout << "=== END CLEAN INITIALIZATION ===" << std::endl;
         
         Point p_rounded_point(p_rounded);
         initialize(P, p_rounded_point, rng);
@@ -122,7 +121,7 @@ private:
         bool debug_print = (debug_call_count <= 3);
         
         if (debug_print) {
-            std::cout << "\n=== OPTIMIZED ORACLE (call " << debug_call_count << ") ===" << std::endl;
+            std::cout << "\n=== SPARSE ORACLE (call " << debug_call_count << ") ===" << std::endl;
         }
 
         VT r_rounded = r.getCoefficients();
@@ -173,7 +172,7 @@ private:
 
         if (debug_print) {
             std::cout << "Best intersection: lambda=" << lambda_min << ", facet=" << facet << std::endl;
-            std::cout << "=== END OPTIMIZED ORACLE ===" << std::endl;
+            std::cout << "=== END SPARSE ORACLE ===" << std::endl;
         }
 
         if (facet == -1) {
@@ -206,7 +205,7 @@ private:
         }
         
         if (debug) {
-            std::cout << "\n=== OPTIMIZED REFLECTION " << reflection_count << " ===" << std::endl;
+            std::cout << "\n=== SPARSE REFLECTION " << reflection_count << " ===" << std::endl;
             std::cout << "Facet: " << facet << std::endl;
         }
         
@@ -240,7 +239,7 @@ private:
         v = Point(v_reflected);
         
         if (debug) {
-            std::cout << "=== END OPTIMIZED REFLECTION ===" << std::endl;
+            std::cout << "=== END SPARSE REFLECTION ===" << std::endl;
         }
     }
 
@@ -258,8 +257,9 @@ public:
         bool debug_walk = (walk_call_count <= 2);
         
         if (debug_walk) {
-            std::cout << "\n=== OPTIMIZED WALK " << walk_call_count << " START ===" << std::endl;
+            std::cout << "\n=== SPARSE WALK " << walk_call_count << " START ===" << std::endl;
             std::cout << "Walk length: " << walk_length << std::endl;
+            std::cout << "Billiard length: " << _Len << std::endl;
         }
 
         unsigned int n = P.dimension();
@@ -316,7 +316,7 @@ public:
         }
         
         if (debug_walk) {
-            std::cout << "=== OPTIMIZED WALK " << walk_call_count << " END ===" << std::endl;
+            std::cout << "=== SPARSE WALK " << walk_call_count << " END ===" << std::endl;
         }
         
         // Transform back to original space for output: x = L_inv * y
@@ -332,7 +332,7 @@ private:
                         Point const& p_rounded,
                         RandomNumberGenerator &rng)
     {
-        std::cout << "=== CORRECTED INITIALIZATION ===" << std::endl;
+        std::cout << "\n=== SPARSE INITIALIZATION ===" << std::endl;
         std::cout << "Polytope dimension: " << P.dimension() << std::endl;
         std::cout << "Starting point (rounded): " << p_rounded.getCoefficients().transpose() << std::endl;
         
@@ -406,7 +406,7 @@ private:
             it++;
         }
         
-        std::cout << "=== END CORRECTED INITIALIZATION ===" << std::endl;
+        std::cout << "=== END SPARSE INITIALIZATION ===" << std::endl;
     }
 
     // Member variables for optimized lazy approach

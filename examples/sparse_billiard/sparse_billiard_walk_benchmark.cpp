@@ -262,7 +262,7 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
     
     // Fix: Create parameters object with proper walk length
     typedef SparseBilliardWalk::template Walk<SparseHPOLYTOPE, RNGType> SparseBilliardWalkType;
-    SparseBilliardWalkType::parameters parms(walk_length, true);
+    SparseBilliardWalkType::parameters parms(walk_length, true); 
     SparseBilliardWalkType walk(P_shifted, origin, rng, parms, H_sparse);
 
     auto t1 = clock::now();
@@ -359,7 +359,7 @@ void run_benchmark_case(std::vector<BenchmarkResults>& all_results,
     SparseHPOLYTOPE P_sparse(P_dense.dimension(), P_dense.get_mat().sparseView(), P_dense.get_vec());
     P_sparse.ComputeInnerBall();
     
-    unsigned int walk_length = 3 * dim;
+    unsigned int walk_length = 1 * dim;
     
     // Compare dense rounded vs sparse (with lazy rounding)
     auto dense_rounded_result = benchmark_dense_rounded_billiard_walk(P_dense, num_samples, walk_length);
