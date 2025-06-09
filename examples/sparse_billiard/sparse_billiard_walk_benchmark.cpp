@@ -359,7 +359,7 @@ void run_benchmark_case(std::vector<BenchmarkResults>& all_results,
     SparseHPOLYTOPE P_sparse(P_dense.dimension(), P_dense.get_mat().sparseView(), P_dense.get_vec());
     P_sparse.ComputeInnerBall();
     
-    unsigned int walk_length = 1 * dim;
+    NT walk_length = NT(1) * dim; 
     
     // Compare dense rounded vs sparse (with lazy rounding)
     auto dense_rounded_result = benchmark_dense_rounded_billiard_walk(P_dense, num_samples, walk_length);
@@ -373,7 +373,7 @@ void run_benchmark_case(std::vector<BenchmarkResults>& all_results,
 void run_comprehensive_benchmark() {
     std::vector<BenchmarkResults> all_results;
     unsigned int num_samples = 5000;
-    /*
+    
     // Test 1: Small order polytope (10D) with sparse relations
     run_benchmark_case(all_results, 10, 25, num_samples, "Test 1: 10D Order Polytope (Sparse)");
     
@@ -383,6 +383,7 @@ void run_comprehensive_benchmark() {
     // Test 3: Large order polytope (20D) with dense relations
     run_benchmark_case(all_results, 20, 80, num_samples, "Test 3: 20D Order Polytope (Dense)");
     
+
     // Test 4: High-dimensional polytope (30D) with sparse relations
     run_benchmark_case(all_results, 30, 100, num_samples, "Test 4: 30D Order Polytope (Sparse)");
     
@@ -391,8 +392,10 @@ void run_comprehensive_benchmark() {
     
     // Test 6: Ultra high-dimensional polytope (50D) with sparse relations
     run_benchmark_case(all_results, 50, 200, num_samples, "Test 6: 50D Order Polytope (Sparse)");
-    */
+    
+    
     run_benchmark_case(all_results, 100, 200, num_samples, "Test 100D Ultra Sparse: 200 constraints");
+    
     print_results(all_results);
 }
 
