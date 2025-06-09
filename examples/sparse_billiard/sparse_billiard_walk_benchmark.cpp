@@ -147,8 +147,8 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
     
     // Step 2: Shift polytope to analytic center (keep sparse)
     SparseHPOLYTOPE P_shifted = P;
-    P_shifted.shift(x_ac.getCoefficients());
-    P_shifted.normalize();
+    P_shifted.shift(-x_ac.getCoefficients());
+    
     
     // Step 3: Convert Hessian to sparse format
     Eigen::SparseMatrix<NT, Eigen::ColMajor> H_sparse;
@@ -161,11 +161,18 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
     // Step 4: Create NEW sparse billiard walk with Hessian
     Point origin(P.dimension());
     origin.set_to_origin();
-    
-   // Fix: Create parameters object with proper walk length
-    SparseBilliardWalk::parameters parms(walk_length, true);  // Same as dense version
 
+    if ( !P_shifted.is_in(origin) ) {                 // NEW
+        origin = P_shifted.ComputeInnerBall().first;  // NEW – strictly interior
+        std::cout << "Computed inner ball" << std::endl;
+    } else {
+        std::cout << "WARNING: Origin is not in the polytope" << std::endl;
+        return BenchmarkResults();
+    }
+    
+    // Fix: Create parameters object with proper walk length
     typedef SparseBilliardWalk::template Walk<SparseHPOLYTOPE, RNGType> SparseBilliardWalkType;
+    SparseBilliardWalkType::parameters parms(walk_length, true);  // Same as dense version
     SparseBilliardWalkType walk(P_shifted, origin, rng, parms, H_sparse);  // Fixed: use parms instead of walk_length
 
     auto t1 = clock::now();

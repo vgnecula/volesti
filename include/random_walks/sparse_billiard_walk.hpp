@@ -15,24 +15,6 @@
 // Sparse Billiard walk for uniform distribution with lazy rounding
 struct SparseBilliardWalk
 {
-    SparseBilliardWalk(double L)
-            :   param(L, true)
-    {}
-
-    SparseBilliardWalk()
-            :   param(0, false)
-    {}
-
-    struct parameters
-    {
-        parameters(double L, bool set)
-                :   m_L(L), set_L(set)
-        {}
-        double m_L;
-        bool set_L;
-    };
-
-    parameters param;
 
 template
 <
@@ -46,6 +28,21 @@ struct Walk
     typedef Eigen::SparseMatrix<NT, Eigen::ColMajor> SparseMT;
     typedef Eigen::SparseMatrix<NT, Eigen::RowMajor> SparseRowMT;
     typedef typename Point::Coeff VT;
+    typedef Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> MT;
+
+    struct parameters
+    {
+        parameters(double L = 0, bool set = false)
+            : m_L(L), set_L(set),
+            inner_vi_ak(0), facet_prev(-1) {}
+
+        double m_L;   // requested billiard length
+        bool   set_L; // whether the user fixed it
+
+        // --- per-step scratch fields -------------
+        NT  inner_vi_ak; // ⟨v,a_k⟩ / ‖a_k L‖  of the facet we just hit
+        int  facet_prev;  // index of that facet
+    }; 
 
     // Constructor with Hessian matrix (core requirement from TolisChal)
     // From: "I would implement a new billiard walk struct that would take as input 
@@ -54,11 +51,12 @@ struct Walk
     Walk(GenericPolytope &P, 
          Point const& p, 
          RandomNumberGenerator &rng,
-         parameters const& params,
-         SparseMT const& Hessian)
+         parameters const& user_params,
+         SparseMT const& Hessian) : _param(user_params)
     {
-        _Len = params.set_L ? params.m_L : 2.0 * std::sqrt(static_cast<double>(P.dimension()));
-        
+
+        _Len = _param.set_L ? _param.m_L : 2.0 * std::sqrt(static_cast<double>(P.dimension()));
+ 
         // From: "We don't apply the transformation on the polytope to preserve the sparsity of A"
         // Store original sparse A and b (never transform them)
         _A = P.get_mat();
@@ -72,107 +70,99 @@ struct Walk
 
 private:
     
-    void compute_cholesky_factor(SparseMT const& H)
+    void compute_cholesky_factor(const SparseMT &H)
     {
-        // From TolisChal: "Eigen::SimplicialLLT<Eigen::SparseMatrix<NT, Eigen::ColMajor>, Eigen::Lower> Chol(H);"
-        // Use SimplicialLLT for sparse matrices
         Eigen::SimplicialLLT<SparseMT, Eigen::Lower> chol(H);
-        if (chol.info() != Eigen::Success) {
+        if (chol.info() != Eigen::Success)
             throw std::runtime_error("Cholesky decomposition failed");
+
+        _L = chol.matrixL();    
+        _A_rounded = (_A * _L).template cast<NT>();      // dense copy
+
+        // L⁻¹ (upper‑triangular, sparse)
+        Eigen::SparseMatrix<NT, Eigen::ColMajor> I(_L.rows(), _L.cols());
+        I.setIdentity();
+        Eigen::SparseLU<SparseMT> solver;
+        solver.analyzePattern(_L);
+        solver.factorize(_L);
+        _L_inv = solver.solve(I);
+        _L_inv.prune([](int r,int c,NT){return r<=c;});
+
+        // -------- row norms of A⋅L and scaled b ---------------------------------
+        int m = _A.rows();
+        _row_norm.resize(m);
+        for (int i=0;i<m;++i){
+            Eigen::SparseVector<NT> row = _A.row(i)*_L;    // A_i· L
+            NT nrm = std::sqrt(row.squaredNorm());
+            _row_norm(i) = (nrm>0)? nrm: NT(1);
         }
-        
-        // From TolisChal: "_L_inv = Chol.matrixL().transpose(); // _L is a Cholesky factor of H^{-1}"
-        // L_inv = L^T where H^{-1} = L * L^T
-        _L_inv = chol.matrixL().transpose();
+        _b_scaled = _b.array() / _row_norm.array();
+
+        for (int i=0;i<_A_rounded.rows();++i)
+            _A_rounded.row(i) /= _row_norm(i);           // unit normals
     }
+ 
 
     // Lazy boundary oracle using sparse triangular solves (key innovation)
     // From TolisChal: "So, for example, in the boundary oracle instead of doing Ax = A_rounded*x 
     //                  we do Ax = A * L_inv.template triangularView<Eigen::Upper>().solve(x);"
-    std::pair<NT, int> line_positive_intersect(Point const& r,
-                                               Point const& v,
-                                               VT& Ar,
-                                               VT& Av) const
+    std::pair<NT, int>
+    line_positive_intersect(Point const& r, Point const& v,
+                            VT& Ar_out, VT& Av_out)
     {
-        // Key insight from TolisChal's comment:
-        // Instead of: Ax = A_rounded * x
-        // We do: Ax = A * L_inv.triangularView<Eigen::Upper>().solve(x)
-        
-        VT r_coeffs = r.getCoefficients();
-        VT v_coeffs = v.getCoefficients();
-        
-        // Solve L_inv * r_rounded = r_coeffs for r_rounded
-        // This is equivalent to: r_rounded = L_inv^{-1} * r_coeffs
-        VT r_rounded = r_coeffs;
-        _L_inv.template triangularView<Eigen::Upper>().solveInPlace(r_rounded);
-        
-        // Solve L_inv * v_rounded = v_coeffs for v_rounded  
-        // This is equivalent to: v_rounded = L_inv^{-1} * v_coeffs
-        VT v_rounded = v_coeffs;
-        _L_inv.template triangularView<Eigen::Upper>().solveInPlace(v_rounded);
-        
-        // From TolisChal: "The A_rounded is A*L"
-        // Now compute A * r_rounded and A * v_rounded (lazy A_rounded)
-        // This gives us A * L * x_rounded = A * x_original
-        Ar.noalias() = _A * r_rounded;
-        Av.noalias() = _A * v_rounded;
-        
-        // Standard intersection logic
-        NT min_plus = std::numeric_limits<NT>::max();
+        // Solve L⁻¹ * r and v (to go into rounded space)
+        VT r_solved = r.getCoefficients();
+        _L_inv.template triangularView<Eigen::Upper>().solveInPlace(r_solved);
+
+        VT v_solved = v.getCoefficients();
+        _L_inv.template triangularView<Eigen::Upper>().solveInPlace(v_solved);
+
+        // Compute A * r and A * v
+        Ar_out.noalias() = _A * r_solved;
+
+        VT raw_Av = _A * v_solved;    // We'll keep this unscaled for inner_vi_ak
+        Av_out = raw_Av;              // Copy to be scaled for reflection and intersection
+
+        Ar_out.array() /= _row_norm.array();
+        Av_out.array()   /= _row_norm.array();
+
+        NT lambda_min = std::numeric_limits<NT>::max();
         int facet = -1;
-        
-        for (int i = 0; i < _A.rows(); ++i) {
-            if (std::abs(Av(i)) < NT(1e-14)) continue;
-            
-            NT lambda = (_b(i) - Ar(i)) / Av(i);
-            if (lambda > 0 && lambda < min_plus) {
-                min_plus = lambda;
-                facet = i;
+
+        for (int i = 0; i < Av_out.size(); ++i)
+        {
+            NT av = Av_out(i);
+            if (std::abs(av) < NT(1e-12)) continue;  // Skip near-parallel
+
+            NT lambda = (_b_scaled(i) - Ar_out(i)) / av;
+
+            if (lambda > 0 && lambda < lambda_min)
+            {
+                lambda_min      = lambda;
+                facet           = i;
+                _param.inner_vi_ak = raw_Av(i) / _row_norm(i); // scaled
+                _param.facet_prev  = i;
             }
         }
-        
-        return std::make_pair(min_plus, facet);
+
+        return {lambda_min, facet};
     }
+
+
 
     // Sparse reflection oracle with lazy rounding
     // From general comment: "implementing lazy boundary and reflection oracles"
-    void compute_reflection(Point& v, Point const& p, int const& facet) const
+    void compute_reflection(Point& v, Point& u)
     {
-        // From TolisChal: "since the Hessian has a sparsity structure, the cholesky will also have zeros 
-        //                  in the lower/upper part, so using sparse arithmetics would speedup the oracle computations"
-        
-        // Reflection in rounded space using lazy computation
-        // Normal in original space: _A.row(facet)
-        VT n_original = _A.row(facet).transpose().eval();
-        
-        // Transform normal to rounded space: n_rounded = L_inv^{-T} * n_original
-        // Since L_inv is upper triangular: solve L_inv^T * n_rounded = n_original
-        // From TolisChal: "we mainly use the matrix L computed from the cholesky decomposition 
-        //                  of the Hessian to solve triangular linear systems"
-        VT n_rounded = n_original;
-        _L_inv.transpose().template triangularView<Eigen::Lower>().solveInPlace(n_rounded);
-        
-        // Transform velocity to rounded space
-        VT v_coeffs = v.getCoefficients();
-        VT v_rounded = v_coeffs;
-        _L_inv.template triangularView<Eigen::Upper>().solveInPlace(v_rounded);
-        
-        // Reflect in rounded space: v_new = v - 2 * (v · n) * n / ||n||²
-        NT n_norm2 = n_rounded.squaredNorm();
-        if (n_norm2 < std::numeric_limits<NT>::epsilon()) {
-            throw std::runtime_error("Normal vector has zero norm in compute_reflection");
-        }
-        
-        NT dot_product = v_rounded.dot(n_rounded);
-        VT v_reflected = v_rounded - 2.0 * (dot_product / n_norm2) * n_rounded;
-        
-        // Transform back to original space: v_original = L_inv * v_reflected
-        // From general comment: "However, we apply the walk on the rounded polytope by implementing 
-        //                        lazy boundary and reflection oracles"
-        VT v_original = _L_inv * v_reflected;
-        
-        v = Point(v_original);
-    }
+        NT coef = -2.0 * _param.inner_vi_ak;
+        int facet = _param.facet_prev;
+        VT row = _A_rounded.row(facet);
+        v += Point(coef * row);
+        u += Point(coef * row);
+    } 
+    
+
+
 
 public:
 
@@ -201,6 +191,17 @@ public:
                 // Use lazy boundary oracle (key difference from uniform billiard walk)
                 auto pbpair = line_positive_intersect(_p, _v, _lambdas, _Av);
 
+                NT lambda = pbpair.first;
+                int facet = pbpair.second;
+
+                /* ========== NEW SAFETY GUARD ========== */
+                if (facet < 0) {           // no positive intersection found
+                    _p += T * _v;          // free flight the remaining distance
+                    _lambda_prev = T;
+                    std::cout << "WARNING: No positive intersection found" << std::endl;
+                    break;                 // exit the while(it < 50*n) loop
+                }
+
                 if (T <= pbpair.first) {
                     _p += (T * _v);
                     _lambda_prev = T;
@@ -212,7 +213,7 @@ public:
                 T -= _lambda_prev;
 
                 // Use lazy reflection oracle (key difference from uniform billiard walk)
-                compute_reflection(_v, _p, pbpair.second);
+                compute_reflection(_v, _p);
 
                 it++;
             }
@@ -220,8 +221,8 @@ public:
                 _p = p0;
             }
         }
-        p = _p;
-        _p.set_to_origin();
+        p = Point(_p.getCoefficients());
+        
     }
 
     inline void update_delta(NT L)
@@ -249,6 +250,16 @@ private:
         // Initial intersection
         auto pbpair = line_positive_intersect(_p, _v, _lambdas, _Av);
         
+        NT lambda = pbpair.first;
+        int facet = pbpair.second;
+
+        /* ========== NEW SAFETY GUARD ========== */
+        if (facet < 0) {           // no positive intersection found
+            _p += T * _v;          // free flight the remaining distance
+            _lambda_prev = T;
+            std::cout << "WARNING: No positive intersection found" << std::endl;
+        }
+
         if (T <= pbpair.first) {
             _p += (T * _v);
             _lambda_prev = T;
@@ -259,7 +270,7 @@ private:
         _p += (_lambda_prev * _v);
         T -= _lambda_prev;
         
-        compute_reflection(_v, _p, pbpair.second);
+        compute_reflection(_v, _p);
         
         int it = 0;
         while (it <= 50*n)
@@ -281,7 +292,7 @@ private:
             _p += (_lambda_prev * _v);
             T -= _lambda_prev;
             
-            compute_reflection(_v, _p, pbpair.second);
+            compute_reflection(_v, _p);
             it++;
         }
     }
@@ -302,6 +313,13 @@ private:
     NT _lambda_prev;
     VT _lambdas;
     VT _Av;
+
+    SparseMT _L;                     // lower‑triangular   (H⁻¹ = L·Lᵀ)    // ‖A▭_{i·}‖  – cached once
+    VT       _b_scaled;              // b  divided by those norms
+    VT       _row_norm;
+    parameters _param; 
+    MT _A_rounded;
+
 };
 
 };
