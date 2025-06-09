@@ -204,59 +204,122 @@ private:
             lambda_min = std::numeric_limits<NT>::max();
         }
 
+        if (debug_print && facet != -1) {
+            std::cout << "\nMetric analysis for chosen facet:" << std::endl;
+            
+            // Get the normal vector
+            VT a_i(_A.cols());
+            for (int j = 0; j < _A.cols(); ++j) {
+                a_i(j) = _A.coeff(facet, j);
+            }
+            
+            // Compute various norms
+            VT a_rounded = _L.transpose() * a_i;
+            VT v_vec = v.getCoefficients();
+            VT v_rounded = _L * v_vec;
+            
+            std::cout << "  ||a_original||: " << a_i.norm() << std::endl;
+            std::cout << "  ||a_rounded||: " << a_rounded.norm() << std::endl;
+            std::cout << "  ||v_original||: " << v_vec.norm() << std::endl;
+            std::cout << "  ||v_rounded||: " << v_rounded.norm() << std::endl;
+            
+            // Step size in different metrics
+            VT step_original = lambda_min * v_vec;
+            VT step_rounded = lambda_min * v_rounded;
+            std::cout << "  Step size (original): " << step_original.norm() << std::endl;
+            std::cout << "  Step size (rounded): " << step_rounded.norm() << std::endl;
+            
+            // Distance to boundary in Hessian metric
+            // d_H = sqrt(v^T H v) * lambda
+            // Since H^(-1) = L L^T, we have ||v||_H = ||L^(-1) v||
+            VT Linv_v = _L.template triangularView<Eigen::Lower>().solve(v_vec); 
+            NT v_H_norm = Linv_v.norm();
+            std::cout << "  Distance in H-metric: " << lambda_min * v_H_norm << std::endl;
+        }
+
         return {lambda_min, facet};
     } 
 
-    
+    // Replace the existing compute_reflection with this debug version:
     void compute_reflection(Point& v, Point& u)
     {
-        NT coef = -2.0 * _param.inner_vi_ak;
-        int facet = _param.facet_prev;
+        static int reflection_count = 0;
+        reflection_count++;
+        bool debug = (reflection_count <= 5);
         
+        int facet = _param.facet_prev;
         if (facet < 0 || facet >= _A.rows()) {
             std::cout << "WARNING: Invalid facet " << facet << std::endl;
             return;
         }
         
-        // Get the constraint normal from original A
-        VT a_facet(_A.cols());
-        for (int j = 0; j < _A.cols(); ++j) {
-            a_facet(j) = _A.coeff(facet, j);
+        if (debug) {
+            std::cout << "\n=== REFLECTION DEBUG " << reflection_count << " ===" << std::endl;
+            std::cout << "Facet: " << facet << std::endl;
         }
         
-        // Transform normal to rounded space: a_rounded = L^T * a_facet
-        VT a_rounded = _L.transpose() * a_facet;
+        // Get the constraint normal from original A
+        VT a_original(_A.cols());
+        for (int j = 0; j < _A.cols(); ++j) {
+            a_original(j) = _A.coeff(facet, j);
+        }
         
-        // Normalize the transformed normal
-        a_rounded = a_rounded / a_rounded.norm();
-        
-        // Apply reflection in original space
-        // v and u are in original space, so we need to reflect using the original normal
-        // But the coefficient was computed in rounded space, so we need to adjust
+        // Current velocity
         VT v_original = v.getCoefficients();
         VT u_original = u.getCoefficients();
         
-        // Project velocity onto the original normal
-        NT v_dot_a = v_original.dot(a_facet) / a_facet.squaredNorm();
+        // METHOD 1: Reflection in original space
+        NT v_dot_a_orig = v_original.dot(a_original) / a_original.squaredNorm();
+        VT v_reflected_orig = v_original - 2.0 * v_dot_a_orig * a_original;
         
-        // Reflect in original space
-        v_original -= 2.0 * v_dot_a * a_facet;
-        u_original -= 2.0 * v_dot_a * a_facet;
+        // METHOD 2: Reflection in rounded space
+        VT v_rounded = _L * v_original;
+        VT a_rounded = _L.transpose() * a_original;
+        NT v_dot_a_round = v_rounded.dot(a_rounded) / a_rounded.squaredNorm();
+        VT v_reflected_round = v_rounded - 2.0 * v_dot_a_round * a_rounded;
         
-        v = Point(v_original);
-        u = Point(u_original);
+        // Transform back to original space
+        VT v_reflected_back = _L.template triangularView<Eigen::Lower>().solve(v_reflected_round); 
         
-        static int reflection_count = 0;
-        reflection_count++;
-        if (reflection_count <= 3) {
-            std::cout << "Corrected reflection " << reflection_count << ": facet=" << facet 
-                    << ", v_dot_a=" << v_dot_a << ", ||a_facet||=" << a_facet.norm() << std::endl;
+        if (debug) {
+            std::cout << "Original space:" << std::endl;
+            std::cout << "  ||a_original||: " << a_original.norm() << std::endl;
+            std::cout << "  <v,a>_orig: " << v_original.dot(a_original) << std::endl;
+            std::cout << "  ||v_before||: " << v_original.norm() << std::endl;
+            std::cout << "  ||v_after||: " << v_reflected_orig.norm() << std::endl;
+            
+            std::cout << "Rounded space:" << std::endl;
+            std::cout << "  ||a_rounded||: " << a_rounded.norm() << std::endl;
+            std::cout << "  <v,a>_round: " << v_rounded.dot(a_rounded) << std::endl;
+            std::cout << "  ||v_rounded_before||: " << v_rounded.norm() << std::endl;
+            std::cout << "  ||v_rounded_after||: " << v_reflected_round.norm() << std::endl;
+            
+            std::cout << "Comparison:" << std::endl;
+            std::cout << "  ||v_reflected_orig||: " << v_reflected_orig.norm() << std::endl;
+            std::cout << "  ||v_reflected_back||: " << v_reflected_back.norm() << std::endl;
+            std::cout << "  Difference: " << (v_reflected_orig - v_reflected_back).norm() << std::endl;
+            
+            // Check if reflection preserves feasibility
+            Point p_test = _p + 0.01 * Point(v_reflected_back);
+            VT Ap_test = _A * p_test.getCoefficients();
+            VT slack_test = _b - Ap_test;
+            std::cout << "  Feasibility after small step: " 
+                    << (slack_test.minCoeff() > -1e-10 ? "OK" : "VIOLATED") << std::endl;
+        }
+        
+        // Use the rounded space reflection (METHOD 2)
+        v = Point(v_reflected_back);
+        u = Point(u_original - 2.0 * (u_original.dot(a_original) / a_original.squaredNorm()) * a_original);
+        
+        if (debug) {
+            std::cout << "=== END REFLECTION DEBUG ===" << std::endl;
         }
     }
 
 public:
 
     // CRITICAL FIX 5: Enhanced walk with better error handling
+    // Modified apply function with more debugging:
     template<typename GenericPolytope>
     inline void apply(GenericPolytope &P,
                     Point& p,
@@ -265,63 +328,50 @@ public:
     {
         static int walk_call_count = 0;
         walk_call_count++;
-        bool debug_walk = (walk_call_count == 1);  // Only debug first walk
+        bool debug_walk = (walk_call_count <= 2);  // Debug first two walks
         
         if (debug_walk) {
-            std::cout << "\n=== CORRECTED WALK DEBUG ===" << std::endl;
+            std::cout << "\n=== WALK " << walk_call_count << " START ===" << std::endl;
             std::cout << "Walk length: " << walk_length << std::endl;
+            debug_walk_state("Initial state");
         }
 
         unsigned int n = P.dimension();
         const NT dl = 0.995;
         
-        int successful_steps = 0;
-        int failed_steps = 0;
-        int resets = 0;
-
         for (auto j = 0u; j < walk_length; ++j)
         {
+            if (debug_walk && j < 3) {
+                debug_walk_state("Step start", j);
+            }
+            
             NT T = rng.sample_urdist() * _Len;
             _v = GetDirection<Point>::apply(n, rng);
 
             Point p0 = _p;
             int it = 0;
-            int consecutive_failures = 0;
+            int reflections_this_step = 0;
             
             while (it < 50 * n)
             {
                 auto pbpair = line_positive_intersect(_p, _v, _lambdas, _Av);
-
                 NT lambda = pbpair.first;
                 int facet = pbpair.second;
 
-                // Better error handling
                 if (facet < 0 || lambda <= 0 || lambda == std::numeric_limits<NT>::max()) {
-                    consecutive_failures++;
-                    
-                    if (consecutive_failures > 3) {  // Reduced threshold
-                        // Reset to feasible state
-                        _p = p0;
-                        _v = GetDirection<Point>::apply(n, rng);
-                        resets++;
-                        if (debug_walk && j < 3) {
-                            std::cout << "Reset at step " << j << " after " << consecutive_failures << " failures" << std::endl;
-                        }
-                        break;
-                    }
-                    
-                    // Small perturbation
-                    _p += 0.001 * GetDirection<Point>::apply(n, rng);
-                    it++;
-                    continue;
+                    _p = p0;
+                    _v = GetDirection<Point>::apply(n, rng);
+                    break;
                 }
-                
-                consecutive_failures = 0;
 
                 if (T <= lambda) {
                     _p += (T * _v);
                     _lambda_prev = T;
-                    successful_steps++;
+                    
+                    if (debug_walk && j < 3) {
+                        std::cout << "  Free flight: T=" << T << ", lambda=" << lambda 
+                                << ", reflections=" << reflections_this_step << std::endl;
+                    }
                     break;
                 }
 
@@ -330,19 +380,22 @@ public:
                 T -= _lambda_prev;
 
                 compute_reflection(_v, _p);
+                reflections_this_step++;
                 it++;
             }
             
-            if (it >= 50 * n) {
-                _p = p0;  // Reset on timeout
-                resets++;
+            if (debug_walk && j < 3) {
+                debug_walk_state("Step end", j);
             }
         }
         
         if (debug_walk) {
-            std::cout << "Walk completed: " << successful_steps << "/" << walk_length << " successful" << std::endl;
-            std::cout << "Resets: " << resets << std::endl;
-            std::cout << "=== END CORRECTED WALK DEBUG ===" << std::endl;
+            std::cout << "=== WALK " << walk_call_count << " END ===" << std::endl;
+            
+            // Check how far we've moved
+            VT p_final = _p.getCoefficients();
+            VT p_initial = p.getCoefficients();
+            std::cout << "Total displacement: " << (p_final - p_initial).norm() << std::endl;
         }
         
         p = Point(_p.getCoefficients());
@@ -438,6 +491,42 @@ private:
         }
     }
 
+    // Inside the Walk class, add this debug function:
+    void debug_walk_state(const std::string& label, int step = -1) {
+        static int debug_count = 0;
+        if (debug_count++ > 10) return;  // Limit debug output
+        
+        std::cout << "\n=== WALK STATE: " << label;
+        if (step >= 0) std::cout << " (step " << step << ")";
+        std::cout << " ===" << std::endl;
+        
+        // Current position
+        VT p_vec = _p.getCoefficients();
+        std::cout << "Position ||p||: " << p_vec.norm() << std::endl;
+        
+        // Check feasibility
+        VT Ap = _A * p_vec;
+        VT slack = _b - Ap;
+        int violated = (slack.array() < -1e-10).count();
+        std::cout << "Feasibility: " << (violated == 0 ? "OK" : "VIOLATED") 
+                << " (slack range: [" << slack.minCoeff() << ", " << slack.maxCoeff() << "])" << std::endl;
+        
+        // Position in rounded space
+        VT p_rounded = _L * p_vec;
+        std::cout << "||p_rounded||: " << p_rounded.norm() 
+                << " (ratio: " << p_rounded.norm() / p_vec.norm() << ")" << std::endl;
+        
+        // Velocity info
+        if (_v.dimension() > 0) {
+            VT v_vec = _v.getCoefficients();
+            VT v_rounded = _L * v_vec;
+            std::cout << "||v||: " << v_vec.norm() << ", ||v_rounded||: " << v_rounded.norm() << std::endl;
+            
+            // Compute velocity norm in Hessian metric
+            VT Lv = _L.template triangularView<Eigen::Lower>().solve(v_vec);
+            std::cout << "||v||_H (Hessian norm): " << Lv.norm() << std::endl;
+        }
+    }
 
      // Updated member variables for corrected approach
     SparseRowMT _A;              // Original sparse A
