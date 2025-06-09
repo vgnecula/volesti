@@ -65,20 +65,20 @@ struct Walk
         
         // STEP 2: Transform starting point to rounded space
         VT p_original = p.getCoefficients();
-        VT p_rounded = _L_inv_dense * p_original;  // Use cached dense version for efficiency
+        VT p_rounded = _L_dense * p_original;  // CORRECTED: y = L * x (forward transform)
         
-        std::cout << "=== OPTIMIZED LAZY INITIALIZATION ===" << std::endl;
+        std::cout << "=== CORRECTED LAZY INITIALIZATION ===" << std::endl;
         std::cout << "Billiard length: " << _Len << std::endl;
         std::cout << "Starting point (original): " << p_original.transpose() << std::endl;
         std::cout << "Starting point (rounded): " << p_rounded.transpose() << std::endl;
         
-        // Verify lazy evaluation: A * L_inv^(-1) * p_rounded should equal A * p_original
-        VT p_transformed_back = _L_dense.template triangularView<Eigen::Lower>().solve(p_rounded);
+        // Verify lazy evaluation: A * L_inv * p_rounded should equal A * p_original
+        VT p_transformed_back = _L_inv_dense * p_rounded;  // CORRECTED: x = L_inv * y (inverse transform)
         VT Ap_original = _A * p_original;  // ← KEEP SPARSE!
         VT Ap_lazy = _A * p_transformed_back;  // ← KEEP SPARSE!
         NT lazy_error = (Ap_original - Ap_lazy).norm();
         std::cout << "Lazy evaluation error: " << lazy_error << " (should be ~0)" << std::endl;
-        std::cout << "=== END OPTIMIZED INITIALIZATION ===" << std::endl;
+        std::cout << "=== END CORRECTED INITIALIZATION ===" << std::endl;
         
         Point p_rounded_point(p_rounded);
         initialize(P, p_rounded_point, rng);
@@ -128,9 +128,9 @@ private:
         VT r_rounded = r.getCoefficients();
         VT v_rounded = v.getCoefficients();
         
-        // Transform back to original space using efficient dense triangular solve
-        VT r_original = _L_dense.template triangularView<Eigen::Lower>().solve(r_rounded);
-        VT v_original = _L_dense.template triangularView<Eigen::Lower>().solve(v_rounded);
+        // CORRECTED: Transform back to original space: x = L_inv * y
+        VT r_original = _L_inv_dense * r_rounded;
+        VT v_original = _L_inv_dense * v_rounded;
         
         // Apply original SPARSE A to transformed coordinates - THIS IS THE KEY!
         Ar_out = _A * r_original;  // ← SPARSE matrix-vector multiply!
@@ -163,8 +163,8 @@ private:
                     // Get facet normal from sparse A (avoid dense conversion)
                     VT a_original = extract_sparse_row(_A, i);
                     
-                    // Transform normal to rounded space: a_rounded = L_inv^T * a_original
-                    VT a_rounded = _L_inv_dense.transpose() * a_original;
+                    // Transform normal to rounded space: a_rounded = L^T * a_original
+                    VT a_rounded = _L_dense.transpose() * a_original;
                     _param.inner_vi_ak = v_rounded.dot(a_rounded) / a_rounded.squaredNorm();
                     _param.facet_prev = i;
                 }
@@ -213,8 +213,8 @@ private:
         // Get the constraint normal from original sparse A efficiently
         VT a_original = extract_sparse_row(_A, facet);
         
-        // Transform normal to rounded space: a_rounded = L_inv^T * a_original
-        VT a_rounded = _L_inv_dense.transpose() * a_original;
+        // Transform normal to rounded space: a_rounded = L^T * a_original  
+        VT a_rounded = _L_dense.transpose() * a_original;
         VT v_rounded = v.getCoefficients();
         
         // Reflection in rounded space using transformed normal
@@ -301,9 +301,9 @@ public:
             }
             
             if (debug_walk && j < 3) {
-                // Check feasibility using optimized lazy evaluation
+                // Check feasibility using corrected lazy evaluation
                 VT p_rounded = _p.getCoefficients();
-                VT p_original = _L_dense.template triangularView<Eigen::Lower>().solve(p_rounded);
+                VT p_original = _L_inv_dense * p_rounded;  // CORRECTED: x = L_inv * y
                 VT Ap = _A * p_original;  // ← SPARSE multiply!
                 VT slack = _b - Ap;
                 int violated = (slack.array() < -1e-10).count();
@@ -319,9 +319,9 @@ public:
             std::cout << "=== OPTIMIZED WALK " << walk_call_count << " END ===" << std::endl;
         }
         
-        // Transform back to original space for output using efficient solve
+        // Transform back to original space for output: x = L_inv * y
         VT p_rounded = _p.getCoefficients();
-        VT p_original = _L_dense.template triangularView<Eigen::Lower>().solve(p_rounded);
+        VT p_original = _L_inv_dense * p_rounded;  // CORRECTED transformation
         p = Point(p_original);
     }
 
@@ -332,13 +332,13 @@ private:
                         Point const& p_rounded,
                         RandomNumberGenerator &rng)
     {
-        std::cout << "\n=== OPTIMIZED INITIALIZATION ===" << std::endl;
+        std::cout << "=== CORRECTED INITIALIZATION ===" << std::endl;
         std::cout << "Polytope dimension: " << P.dimension() << std::endl;
         std::cout << "Starting point (rounded): " << p_rounded.getCoefficients().transpose() << std::endl;
         
-        // Check if starting point is feasible using optimized lazy evaluation
+        // Check if starting point is feasible using corrected lazy evaluation
         VT p_rounded_coeffs = p_rounded.getCoefficients();
-        VT p_original = _L_dense.template triangularView<Eigen::Lower>().solve(p_rounded_coeffs);
+        VT p_original = _L_inv_dense * p_rounded_coeffs;  // CORRECTED: x = L_inv * y
         VT Ap = _A * p_original;  // ← SPARSE multiply!
         VT slack = _b - Ap;
         std::cout << "Initial feasibility: slack range [" << slack.minCoeff() << ", " << slack.maxCoeff() << "]" << std::endl;
@@ -406,7 +406,7 @@ private:
             it++;
         }
         
-        std::cout << "=== END OPTIMIZED INITIALIZATION ===" << std::endl;
+        std::cout << "=== END CORRECTED INITIALIZATION ===" << std::endl;
     }
 
     // Member variables for optimized lazy approach
