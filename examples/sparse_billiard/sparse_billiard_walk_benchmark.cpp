@@ -383,7 +383,6 @@ void run_comprehensive_benchmark() {
     // Test 3: Large order polytope (20D) with dense relations
     run_benchmark_case(all_results, 20, 80, num_samples, "Test 3: 20D Order Polytope (Dense)");
     
-    /*
     // Test 4: High-dimensional polytope (30D) with sparse relations
     run_benchmark_case(all_results, 30, 100, num_samples, "Test 4: 30D Order Polytope (Sparse)");
     
@@ -392,7 +391,7 @@ void run_comprehensive_benchmark() {
     
     // Test 6: Ultra high-dimensional polytope (50D) with sparse relations
     run_benchmark_case(all_results, 50, 200, num_samples, "Test 6: 50D Order Polytope (Sparse)");
-    */
+    
     print_results(all_results);
 }
 
