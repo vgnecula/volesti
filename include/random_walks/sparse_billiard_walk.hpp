@@ -88,45 +88,44 @@ private:
         if (chol.info() != Eigen::Success)
             throw std::runtime_error("Cholesky decomposition failed");
 
-        _L = chol.matrixL();  // Lower triangular
+        _L = chol.matrixL();  // Lower triangular L
         std::cout << "L size: " << _L.rows() << "x" << _L.cols() << std::endl;
         std::cout << "L nnz: " << _L.nonZeros() << std::endl;
         
-        // CRITICAL FIX: _L_inv should be L^T (upper triangular)
-        // This is what we use for the transformation L^{-T} * x
+        // _L_inv is L^T for the coordinate transformation: x_rounded = L^{-T} * x
         _L_inv = _L.transpose();
         std::cout << "L_inv (L^T) nnz: " << _L_inv.nonZeros() << std::endl;
 
-        // Pre-compute A_rounded = A * L^{-T} for reflection oracle
-        // We can't do this lazily yet, but we normalize by row norms
-        int m = _A.rows();
-        _row_norm.resize(m);
-        _A_rounded.resize(m, _A.cols());
+        // CRITICAL FIX: Compute A_rounded = A * L^{-1} (NOT A * L^{-T})
+        // Mathematical reasoning:
+        // - Points transform as: x_rounded = L^{-T} * x_original  
+        // - Constraints transform as: A_rounded * x_rounded ≤ b
+        // - Substituting: A_rounded * (L^{-T} * x_original) ≤ b
+        // - Therefore: A_rounded = A * L^{-1} * L^T = A * L^{-1}
         
-        // Compute each row: (A * L^{-T})[i,:] and its norm
+        int m = _A.rows();
+        int n = _A.cols();
+        _row_norm.resize(m);
+        _A_rounded.resize(m, n);
+        
+        // Compute A_rounded = A * L^{-1} by solving L * Y = A^T, then A_rounded = Y^T
+        MT A_dense = MT(_A);  // Convert sparse A to dense for easier computation
+        MT L_dense = MT(_L);  // Convert sparse L to dense
+        
+        // Solve L * A_rounded^T = A^T for A_rounded^T
+        MT A_rounded_T = L_dense.template triangularView<Eigen::Lower>().solve(A_dense.transpose());
+        _A_rounded = A_rounded_T.transpose();
+        
+        // Compute row norms BEFORE normalization
         for (int i = 0; i < m; ++i) {
-            // Get i-th row of A (sparse)
-            VT a_row_dense = VT::Zero(_A.cols());
-            for (typename SparseRowMT::InnerIterator it(_A, i); it; ++it) {
-                a_row_dense(it.col()) = it.value();
-            }
-            
-            // Solve L^T * y = a_row to get (A * L^{-T})[i,:]
-            VT a_rounded_row = a_row_dense;
-            _L_inv.template triangularView<Eigen::Upper>().solveInPlace(a_rounded_row);
-            
-            // Store the row
-            _A_rounded.row(i) = a_rounded_row.transpose();
-            
-            // Compute and store norm
-            NT nrm = a_rounded_row.norm();
-            _row_norm(i) = (nrm > 0) ? nrm : NT(1);
+            NT nrm = _A_rounded.row(i).norm();
+            _row_norm(i) = (nrm > NT(1e-12)) ? nrm : NT(1);
         }
         
-        // Scale b by row norms
+        // Scale b by row norms  
         _b_scaled = _b.array() / _row_norm.array();
         
-        // Normalize A_rounded rows by their norms
+        // Normalize A_rounded rows to have unit norm
         for (int i = 0; i < m; ++i) {
             _A_rounded.row(i) /= _row_norm(i);
         }
