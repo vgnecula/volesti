@@ -70,6 +70,7 @@ struct Walk
 
 private:
     
+    // Fixed Cholesky computation
     void compute_cholesky_factor(const SparseMT &H)
     {
         std::cout << "=== CHOLESKY FACTOR DEBUG ===" << std::endl;
@@ -82,39 +83,56 @@ private:
         std::cout << "Max eigenvalue: " << eigenvals.maxCoeff() << std::endl;
         std::cout << "Condition number: " << eigenvals.maxCoeff() / eigenvals.minCoeff() << std::endl;
         
+        // Compute Cholesky: H = L * L^T
         Eigen::SimplicialLLT<SparseMT, Eigen::Lower> chol(H);
         if (chol.info() != Eigen::Success)
             throw std::runtime_error("Cholesky decomposition failed");
 
-        _L = chol.matrixL();
+        _L = chol.matrixL();  // Lower triangular
         std::cout << "L size: " << _L.rows() << "x" << _L.cols() << std::endl;
         std::cout << "L nnz: " << _L.nonZeros() << std::endl;
         
-        _A_rounded = (_A * _L).template cast<NT>();
-        std::cout << "A size: " << _A.rows() << "x" << _A.cols() << std::endl;
-        std::cout << "A_rounded size: " << _A_rounded.rows() << "x" << _A_rounded.cols() << std::endl;
-
-        // L^T (upper triangular, sparse)
+        // CRITICAL FIX: _L_inv should be L^T (upper triangular)
+        // This is what we use for the transformation L^{-T} * x
         _L_inv = _L.transpose();
-        _L_inv.prune([](int r,int c,NT){return r<=c;});
         std::cout << "L_inv (L^T) nnz: " << _L_inv.nonZeros() << std::endl;
 
-        // -------- row norms of A⋅L and scaled b ---------------------------------
+        // Pre-compute A_rounded = A * L^{-T} for reflection oracle
+        // We can't do this lazily yet, but we normalize by row norms
         int m = _A.rows();
         _row_norm.resize(m);
-        for (int i=0;i<m;++i){
-            Eigen::SparseVector<NT> row = _A.row(i)*_L;
-            NT nrm = std::sqrt(row.squaredNorm());
-            _row_norm(i) = (nrm>0)? nrm: NT(1);
+        _A_rounded.resize(m, _A.cols());
+        
+        // Compute each row: (A * L^{-T})[i,:] and its norm
+        for (int i = 0; i < m; ++i) {
+            // Get i-th row of A (sparse)
+            VT a_row_dense = VT::Zero(_A.cols());
+            for (typename SparseRowMT::InnerIterator it(_A, i); it; ++it) {
+                a_row_dense(it.col()) = it.value();
+            }
+            
+            // Solve L^T * y = a_row to get (A * L^{-T})[i,:]
+            VT a_rounded_row = a_row_dense;
+            _L_inv.template triangularView<Eigen::Upper>().solveInPlace(a_rounded_row);
+            
+            // Store the row
+            _A_rounded.row(i) = a_rounded_row.transpose();
+            
+            // Compute and store norm
+            NT nrm = a_rounded_row.norm();
+            _row_norm(i) = (nrm > 0) ? nrm : NT(1);
         }
+        
+        // Scale b by row norms
         _b_scaled = _b.array() / _row_norm.array();
+        
+        // Normalize A_rounded rows by their norms
+        for (int i = 0; i < m; ++i) {
+            _A_rounded.row(i) /= _row_norm(i);
+        }
 
         std::cout << "Row norms range: [" << _row_norm.minCoeff() << ", " << _row_norm.maxCoeff() << "]" << std::endl;
         std::cout << "b_scaled range: [" << _b_scaled.minCoeff() << ", " << _b_scaled.maxCoeff() << "]" << std::endl;
-
-        for (int i=0;i<_A_rounded.rows();++i)
-            _A_rounded.row(i) /= _row_norm(i);
-            
         std::cout << "=== END CHOLESKY DEBUG ===" << std::endl;
     }
  
@@ -138,41 +156,32 @@ private:
             std::cout << "Input v: " << v.getCoefficients().transpose() << std::endl;
         }
 
-        // TEST BOTH TRIANGULAR SOLVE OPTIONS
-        VT r_solved_L = r.getCoefficients();
-        VT r_solved_LT = r.getCoefficients();
+        // CORRECT: Use L^T (upper triangular) solve to transform to rounded coordinates
+        // Mathematical reasoning: if H = L*L^T, then to transform x to rounded space,
+        // we need L^{-T} * x, which is solved by L^T \ x (upper triangular solve)
+        VT r_rounded = r.getCoefficients();
+        VT v_rounded = v.getCoefficients();
         
-        // Option 1: Solve with L (lower triangular)
-        _L.template triangularView<Eigen::Lower>().solveInPlace(r_solved_L);
-        
-        // Option 2: Solve with L^T (upper triangular) 
-        _L_inv.template triangularView<Eigen::Upper>().solveInPlace(r_solved_LT);
+        // Transform both position and direction to rounded coordinates
+        _L_inv.template triangularView<Eigen::Upper>().solveInPlace(r_rounded);
+        _L_inv.template triangularView<Eigen::Upper>().solveInPlace(v_rounded);
         
         if (debug_print) {
-            std::cout << "r_solved with L: " << r_solved_L.transpose() << std::endl;
-            std::cout << "r_solved with L^T: " << r_solved_LT.transpose() << std::endl;
+            std::cout << "r_rounded (L^T solve): " << r_rounded.transpose() << std::endl;
+            std::cout << "v_rounded (L^T solve): " << v_rounded.transpose() << std::endl;
         }
 
-        // Use the L version for now (you can test both)
-        VT r_solved = r_solved_L;
-        
-        VT v_solved = v.getCoefficients();
-        _L.template triangularView<Eigen::Lower>().solveInPlace(v_solved);
-
-        if (debug_print) {
-            std::cout << "v_solved: " << v_solved.transpose() << std::endl;
-        }
-
-        // Compute A * r and A * v
-        Ar_out.noalias() = _A * r_solved;
-        VT raw_Av = _A * v_solved;
+        // Compute A * r_rounded and A * v_rounded using original sparse matrix A
+        Ar_out.noalias() = _A * r_rounded;
+        VT raw_Av = _A * v_rounded;
         Av_out = raw_Av;
 
         if (debug_print) {
-            std::cout << "A * r_solved: " << Ar_out.transpose() << std::endl;
-            std::cout << "A * v_solved: " << Av_out.transpose() << std::endl;
+            std::cout << "A * r_rounded: " << Ar_out.transpose() << std::endl;
+            std::cout << "A * v_rounded: " << Av_out.transpose() << std::endl;
         }
 
+        // Normalize by row norms (this makes constraints unit-norm in rounded space)
         Ar_out.array() /= _row_norm.array();
         Av_out.array() /= _row_norm.array();
 
@@ -186,6 +195,7 @@ private:
         int facet = -1;
         int positive_lambdas = 0;
         
+        // Find ray-polytope intersection in rounded space
         for (int i = 0; i < Av_out.size(); ++i)
         {
             NT av = Av_out(i);
@@ -199,11 +209,12 @@ private:
                         << " - Ar=" << Ar_out(i) << ") / av=" << av << std::endl;
             }
 
-            if (lambda > 0) {
+            if (lambda > NT(1e-12)) {  // Use small positive threshold
                 positive_lambdas++;
                 if (lambda < lambda_min) {
                     lambda_min = lambda;
                     facet = i;
+                    // Store normalized value for reflection
                     _param.inner_vi_ak = raw_Av(i) / _row_norm(i);
                     _param.facet_prev = i;
                 }
@@ -216,20 +227,26 @@ private:
             std::cout << "=== END INTERSECTION DEBUG ===" << std::endl;
         }
 
+        // Return -1 facet if no valid intersection found
+        if (facet == -1) {
+            lambda_min = std::numeric_limits<NT>::max();
+        }
+
         return {lambda_min, facet};
-    }
+    } 
 
 
 
 
-    // Sparse reflection oracle with lazy rounding
-    // From general comment: "implementing lazy boundary and reflection oracles"
+    // Fixed reflection oracle
     void compute_reflection(Point& v, Point& u)
     {
         NT coef = -2.0 * _param.inner_vi_ak;
         int facet = _param.facet_prev;
         
-        // Use pre-computed A_rounded (already normalized)
+        if (facet < 0) return; // Safety check
+        
+        // Use pre-computed normalized A_rounded row
         VT row_vec = _A_rounded.row(facet);
         
         Point a(coef * row_vec);
@@ -245,60 +262,73 @@ public:
     // Main walk function (same interface as uniform billiard walk)
     // From conversation: "keep the structure and everything the same as for the uniform billiard walk, 
     //                     but change the logic according to all the previous comments"
+    // Fixed main walk function with better error handling
     template<typename GenericPolytope>
     inline void apply(GenericPolytope &P,
-                      Point& p,
-                      unsigned int const& walk_length,
-                      RandomNumberGenerator &rng)
+                    Point& p,
+                    unsigned int const& walk_length,
+                    RandomNumberGenerator &rng)
     {
         unsigned int n = P.dimension();
-        NT T = rng.sample_urdist() * _Len;
         const NT dl = 0.995;
 
-        for (auto j=0u; j<walk_length; ++j)
+        for (auto j = 0u; j < walk_length; ++j)
         {
-            T = rng.sample_urdist() * _Len;
+            NT T = rng.sample_urdist() * _Len;
             _v = GetDirection<Point>::apply(n, rng);
 
             Point p0 = _p;
             int it = 0;
-            while (it < 50*n)
+            int consecutive_failures = 0;
+            
+            while (it < 50 * n)
             {
-                // Use lazy boundary oracle (key difference from uniform billiard walk)
+                // Use lazy boundary oracle
                 auto pbpair = line_positive_intersect(_p, _v, _lambdas, _Av);
 
                 NT lambda = pbpair.first;
                 int facet = pbpair.second;
 
-                /* ========== NEW SAFETY GUARD ========== */
-                if (facet < 0) {           // no positive intersection found
-                    _p += T * _v;          // free flight the remaining distance
-                    _lambda_prev = T;
-                    std::cout << "WARNING: No positive intersection found" << std::endl;
-                    break;                 // exit the while(it < 50*n) loop
+                // Improved error handling
+                if (facet < 0 || lambda <= 0 || lambda == std::numeric_limits<NT>::max()) {
+                    consecutive_failures++;
+                    if (consecutive_failures > 5) {
+                        // Reset to a safe state
+                        _p = p0;
+                        _v = GetDirection<Point>::apply(n, rng);
+                        std::cout << "WARNING: Resetting due to consecutive failures" << std::endl;
+                        break;
+                    }
+                    
+                    // Try a small random step
+                    _p += 0.01 * GetDirection<Point>::apply(n, rng);
+                    continue;
                 }
+                
+                consecutive_failures = 0; // Reset failure counter
 
-                if (T <= pbpair.first) {
+                if (T <= lambda) {
                     _p += (T * _v);
                     _lambda_prev = T;
                     break;
                 }
 
-                _lambda_prev = dl * pbpair.first;
+                _lambda_prev = dl * lambda;
                 _p += (_lambda_prev * _v);
                 T -= _lambda_prev;
 
-                // Use lazy reflection oracle (key difference from uniform billiard walk)
+                // Use lazy reflection oracle
                 compute_reflection(_v, _p);
 
                 it++;
             }
-            if (it == 50*n){
-                _p = p0;
+            
+            if (it == 50 * n) {
+                _p = p0; // Reset on timeout
             }
         }
-        p = Point(_p.getCoefficients());
         
+        p = Point(_p.getCoefficients());
     }
 
     inline void update_delta(NT L)
