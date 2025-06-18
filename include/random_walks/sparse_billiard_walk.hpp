@@ -129,10 +129,7 @@ private:
                     facet = i;
                     
                     // Compute inner product and rescale by row norm
-                    VT a_rounded_row = _A_rounded.row(i).transpose();
-                    _param.inner_vi_ak = v_rounded.dot(a_rounded_row);
-                    // Note: _param.inner_vi_ak should be rescaled by A_rounded_row_norms, 
-                    // but since A_rounded is already normalized, this is correct
+                    _param.inner_vi_ak = av / _A_rounded_row_norms(i);
                     _param.facet_prev = i;
                 }
             }
@@ -155,7 +152,7 @@ private:
             return;
         }
         
-        VT a_rounded_row = _A_rounded.row(facet).transpose();
+        VT a_rounded_row = _A_rounded.row(facet);
         Point a((-2.0 * _param.inner_vi_ak) * a_rounded_row);
         v += a;
         
@@ -224,18 +221,6 @@ private:
                         Point const& p_rounded,
                         RandomNumberGenerator &rng)
     {
-        
-        
-        VT p_rounded_coeffs = p_rounded.getCoefficients();
-        VT p_original = inverse_transform(p_rounded_coeffs);
-        VT Ap = _A * p_original;
-        VT slack = _b - Ap;
-        int violated = (slack.array() < 0).count();
-        
-        if (violated > 0) {
-            throw std::runtime_error("Starting point is not feasible in the implementation!");
-        }
-        
         unsigned int n = P.dimension();
         const NT dl = 0.995;
         
