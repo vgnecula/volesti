@@ -143,6 +143,36 @@ private:
         return {lambda_min, facet};
     }
 
+    std::pair<NT, int>
+    line_positive_intersect(Point const& r, Point const& v, VT& Ar, VT& Av, NT const& lambda_prev)
+    {
+        Ar.noalias() += lambda_prev * Av;
+
+        VT v_rounded = v.getCoefficients();
+        VT v_original = inverse_transform(v_rounded);
+        Av = _A * v_original;
+
+        NT lambda_min = std::numeric_limits<NT>::max();
+        int facet = -1;
+
+        for (int i = 0; i < Av.size(); ++i)
+        {
+            NT av = Av(i);
+            if (std::abs(av) < NT(1e-12)) continue;
+
+            NT lambda = (_b(i) - Ar(i)) / av;
+
+            if (lambda > NT(1e-12) && lambda < lambda_min) {
+                lambda_min = lambda;
+                facet = i;
+                _param.inner_vi_ak = av / _A_rounded_row_norms(i);
+                _param.facet_prev = i;
+            }
+        }
+
+        return {lambda_min, facet};
+    } 
+
     void compute_reflection(Point& v, Point const&)
     {
         
@@ -155,8 +185,11 @@ private:
         VT a_rounded_row = _A_rounded.row(facet);
         Point a((-2.0 * _param.inner_vi_ak) * a_rounded_row);
         v += a;
-        
 
+        VT p_rounded = _p.getCoefficients();
+        VT p_original = inverse_transform(p_rounded);
+        _Ar = _A * p_original;
+        _lambda_prev = 0; 
     }
 
 public:
@@ -178,36 +211,42 @@ public:
             NT T = rng.sample_urdist() * _Len;
             _v = GetDirection<Point>::apply(n, rng);
 
+            _lambda_prev = 0;
+            VT p_round = _p.getCoefficients();
+            _Ar = _A * inverse_transform(p_round);
+
             Point p0 = _p;
             int it = 0;
-            
+
             while (it < 50 * n)
             {
-                auto pbpair = line_positive_intersect(_p, _v);
-                NT lambda = pbpair.first;
-                int facet = pbpair.second;
+                std::pair<NT,int> pbpair;
 
-                if (facet < 0 || lambda <= 0 || lambda == std::numeric_limits<NT>::max()) {
-                    _p = p0;
-                    _v = GetDirection<Point>::apply(n, rng);
+                if (it == 0) {
+                    pbpair = line_positive_intersect(_p, _v);
+                    VT v_round = _v.getCoefficients();
+                    _Av  = _A * inverse_transform(v_round);
+                } else {
+                    pbpair = line_positive_intersect(_p, _v, _Ar, _Av, _lambda_prev);
+                }
+
+                if (T <= pbpair.first) {
+                    _p += T * _v;
+                    _lambda_prev = T;
                     break;
                 }
 
-                if (T <= lambda) {
-                    _p += (T * _v);
-                    break;
-                }
-
-                NT lambda_used = dl * lambda;
-                _p += (lambda_used * _v);
-                T -= lambda_used;
+                _lambda_prev = dl * pbpair.first;
+                _p += _lambda_prev * _v;
+                T -= _lambda_prev;
 
                 compute_reflection(_v, _p);
                 it++;
             }
-            
 
-        }
+            if (it == 50 * n)
+                _p = p0;
+        } 
         
         VT p_rounded = _p.getCoefficients();
         VT p_original = inverse_transform(p_rounded);
@@ -226,46 +265,51 @@ private:
         
         _p = p_rounded;  // Already in rounded space
         _v = GetDirection<Point>::apply(n, rng);
-
+                
+        _Ar.setZero(_A.rows());
+        _Av.setZero(_A.rows());
+        _lambda_prev = 0;
+        
         NT T = rng.sample_urdist() * _Len;
         
         auto pbpair = line_positive_intersect(_p, _v);
-        NT lambda = pbpair.first;
-        int facet = pbpair.second;
-
-        if (facet < 0) {
+        
+        if (pbpair.second < 0) {
             _p += T * _v;
-            return;
-        }
-
-        if (T <= lambda) {
-            _p += (T * _v);
+            _lambda_prev = T;
             return;
         }
         
-        NT lambda_used = dl * lambda;
-        _p += (lambda_used * _v);
-        T -= lambda_used;
+        if (T <= pbpair.first) {
+            _p += (T * _v);
+            _lambda_prev = T;
+            return;
+        }
+        
+        _lambda_prev = dl * pbpair.first;
+        _p += (_lambda_prev * _v);
+        T -= _lambda_prev;
         
         compute_reflection(_v, _p);
         
         int it = 0;
         while (it <= 50*n && T > 0)
         {
-            auto pbpair2 = line_positive_intersect(_p, _v);
+            auto pbpair2 = line_positive_intersect(_p, _v, _Ar, _Av, _lambda_prev);
             
             if (T <= pbpair2.first) {
                 _p += (T * _v);
+                _lambda_prev = T;
                 break;
             } else if (it == 50*n) {
-                NT final_lambda = rng.sample_urdist() * pbpair2.first;
-                _p += (final_lambda * _v);
+                _lambda_prev = rng.sample_urdist() * pbpair2.first;
+                _p += (_lambda_prev * _v);
                 break;
             }
             
-            NT lambda_step = dl * pbpair2.first;
-            _p += (lambda_step * _v);
-            T -= lambda_step;
+            _lambda_prev = dl * pbpair2.first;
+            _p += (_lambda_prev * _v);
+            T -= _lambda_prev;
             
             compute_reflection(_v, _p);
             it++;
@@ -283,6 +327,10 @@ private:
     Point _p;
     Point _v;
     parameters _param;
+
+    VT _Ar;
+    VT _Av;
+    NT _lambda_prev;
 };
 
 };
