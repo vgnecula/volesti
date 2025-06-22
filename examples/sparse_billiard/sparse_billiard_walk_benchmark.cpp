@@ -161,8 +161,8 @@ BenchmarkResults benchmark_sparse_billiard_walk(SparseHPOLYTOPE& P, unsigned int
     }
     
     typedef SparseBilliardWalk::template Walk<SparseHPOLYTOPE, RNGType> SparseBilliardWalkType;
-    SparseBilliardWalkType::parameters parms(walk_length, true); 
-    SparseBilliardWalkType walk(P_shifted, origin, rng, parms, H_sparse);
+    SparseBilliardWalk::parameters parms(walk_length, true);
+    SparseBilliardWalk::Walk<SparseHPOLYTOPE, RNGType> walk(P_shifted, origin, rng, parms, H_sparse);
 
     auto t1 = clock::now();
 
