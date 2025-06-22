@@ -29,14 +29,10 @@ struct Walk
     struct parameters
     {
         parameters(double L = 0, bool set = false)
-            : m_L(L), set_L(set),
-            inner_vi_ak(0), facet_prev(-1) {}
+            : m_L(L), set_L(set) {}
 
         double m_L;
         bool   set_L;
-
-        NT  inner_vi_ak; 
-        int  facet_prev;
     }; 
 
     template <typename GenericPolytope>
@@ -44,10 +40,10 @@ struct Walk
          Point const& p, 
          RandomNumberGenerator &rng,
          parameters const& user_params,
-         SparseMT const& Hessian) : _param(user_params)
+         SparseMT const& Hessian) 
     {
-        _Len = _param.set_L ? _param.m_L : NT(6.0) * std::sqrt(static_cast<double>(P.dimension()));
- 
+        _Len = user_params.set_L ? user_params.m_L : NT(6.0) * std::sqrt(static_cast<double>(P.dimension()));
+
         // Store original sparse A and b
         _A = P.get_mat();
         _b = P.get_vec();
@@ -118,11 +114,11 @@ public:
                 std::pair<NT,int> pbpair;
 
                 if (it == 0) {
-                    pbpair = P.sparse_line_positive_intersect(_p, _v, _sparams);
+                    pbpair = P.sparse_line_positive_intersect(_p, _v, _oracle_params);
                     VT v_round = _v.getCoefficients();
                     _Av  = _A * _L_inv.transpose().template triangularView<Eigen::Lower>().solve(v_round);
                 } else {
-                    pbpair = P.sparse_line_positive_intersect(_p, _v, _Ar, _Av, _lambda_prev, _sparams);
+                    pbpair = P.sparse_line_positive_intersect(_p, _v, _Ar, _Av, _lambda_prev, _oracle_params);
                 }
 
                 if (T <= pbpair.first) {
@@ -135,7 +131,7 @@ public:
                 _p += _lambda_prev * _v;
                 T -= _lambda_prev;
 
-                P.sparse_compute_reflection(_v, _sparams);
+                P.sparse_compute_reflection(_v, _oracle_params);
                 // 1. recompute _Ar (A × current position in original coordinates)
                 VT p_round    = _p.getCoefficients();
                 _Ar = _A * _L_inv.transpose()
@@ -175,7 +171,7 @@ private:
         
         NT T = rng.sample_urdist() * _Len;
         
-        auto pbpair = P.sparse_line_positive_intersect(_p, _v, _sparams);
+        auto pbpair = P.sparse_line_positive_intersect(_p, _v, _oracle_params);
         
         if (pbpair.second < 0) {
             _p += T * _v;
@@ -193,7 +189,7 @@ private:
         _p += (_lambda_prev * _v);
         T -= _lambda_prev;
         
-        P.sparse_compute_reflection(_v, _sparams);
+        P.sparse_compute_reflection(_v, _oracle_params);
         // 1. recompute _Ar (A × current position in original coordinates)
         VT p_round    = _p.getCoefficients();
         _Ar = _A * _L_inv.transpose()
@@ -206,7 +202,7 @@ private:
         int it = 0;
         while (it <= 50*n && T > 0)
         {
-            auto pbpair2 = P.sparse_line_positive_intersect(_p, _v, _Ar, _Av, _lambda_prev, _sparams);
+            auto pbpair2 = P.sparse_line_positive_intersect(_p, _v, _Ar, _Av, _lambda_prev, _oracle_params);
             
             if (T <= pbpair2.first) {
                 _p += (T * _v);
@@ -222,7 +218,7 @@ private:
             _p += (_lambda_prev * _v);
             T -= _lambda_prev;
             
-            P.sparse_compute_reflection(_v, _sparams);
+            P.sparse_compute_reflection(_v, _oracle_params);
             // 1. recompute _Ar (A × current position in original coordinates)
             VT p_round    = _p.getCoefficients();
             _Ar = _A * _L_inv.transpose()
@@ -245,7 +241,6 @@ private:
     NT _Len;
     Point _p;
     Point _v;
-    parameters _param;
 
     VT _Ar;
     VT _Av;
@@ -253,7 +248,7 @@ private:
 
     /// Carries the **static** rounding data + the two mutable
     /// reflection scalars that HPolytope needs.
-    struct SparseParams {
+    struct OracleParams {
         // immutable references (point to the matrices owned by the walk)
         const SparseMT &L_inv;
         const MT       &A_rounded;
@@ -264,7 +259,7 @@ private:
     };
 
     // ➋  the walk owns one instance
-    SparseParams _sparams { _L_inv, _A_rounded, _A_rounded_row_norms };
+    OracleParams _oracle_params { _L_inv, _A_rounded, _A_rounded_row_norms };
 };
 
 };
