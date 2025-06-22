@@ -7,6 +7,7 @@
 //Contributed and/or modified by Repouskos Panagiotis, as part of Google Summer of Code 2019 program.
 //Contributed and/or modified by Alexandros Manochis, as part of Google Summer of Code 2020 program.
 //Contributed and/or modified by Luca Perju, as part of Google Summer of Code 2024 program.
+//Contributed and/or modified by Vladimir Necula, as part of Google Summer of Code 2025 program.
 
 // Licensed under GNU LGPL.3, see LICENCE file
 
@@ -671,7 +672,7 @@ public:
     template<typename Params>
     std::pair<NT,int> sparse_line_positive_intersect(Point const& r,
                                                   Point const& v,
-                                                  Params        &params)
+                                                  Params &params)
  
     {
         
@@ -753,20 +754,6 @@ public:
         return {lambda_min, facet};
     } 
 
-    template<typename Params>
-    void sparse_compute_reflection(Point& v, Params const& params)
-    {
-        
-        int facet = params.facet_prev;
-        if (facet < 0 || facet >= params.A_rounded.rows()) {
-            std::cout << "ERROR: Invalid facet " << facet << std::endl;
-            return;
-        }
-        
-        VT a_row = params.A_rounded.row(params.facet_prev);
-        v += (-2.0 * params.inner_vi_ak) * Point(a_row);
-    }
-    
     //-----------------------------------------------------------------------------------//
 
 
@@ -1116,6 +1103,13 @@ public:
     void compute_reflection(Point &v, Point const&, update_parameters const& params) const {
             Point a((-2.0 * params.inner_vi_ak) * A.row(params.facet_prev));
             v += a;
+    }
+
+    template<typename Params>
+    void sparse_compute_reflection(Point &v, Params const &params)
+    {
+        VT a_row = params.A_rounded.row(params.facet_prev);
+        v += (-2.0 * params.inner_vi_ak) * Point(a_row);
     }
 
     // Only to be called when MT is in RowMajor format

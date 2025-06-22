@@ -1,3 +1,12 @@
+// VolEsti (volume computation and sampling library)
+
+// Copyright (c) 2012-2025 Vissarion Fisikopoulos
+// Copyright (c) 2018-2025 Apostolos Chalkis
+// Copyright (c) 2025 Vladimir Necula
+
+// Contributed and/or modified by Vladimir Necula, as part of Google Summer of Code 2025 program.
+
+// Licensed under GNU LGPL.3, see LICENCE file
 #include <iostream>
 #include <vector>
 #include <chrono>

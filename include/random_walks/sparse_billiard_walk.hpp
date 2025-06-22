@@ -1,3 +1,13 @@
+// VolEsti (volume computation and sampling library)
+
+// Copyright (c) 2012-2025 Vissarion Fisikopoulos
+// Copyright (c) 2018-2025 Apostolos Chalkis
+// Copyright (c) 2025 Vladimir Necula
+
+// Contributed and/or modified by Vladimir Necula, as part of Google Summer of Code 2025 program.
+
+// Licensed under GNU LGPL.3, see LICENCE file
+
 #ifndef RANDOM_WALKS_SPARSE_BILLIARD_WALK_HPP
 #define RANDOM_WALKS_SPARSE_BILLIARD_WALK_HPP
 
@@ -21,8 +31,8 @@ struct SparseBilliardWalk {
 
     struct parameters {
         parameters(double L = 0, bool set = false)
-            : m_L(L), set_L(set) {}
-
+            : m_L(L), set_L(set) 
+        {}
         double m_L;
         bool set_L;
     };
@@ -43,7 +53,8 @@ struct Walk
     typedef Eigen::SparseMatrix<NT, Eigen::RowMajor> SparseRowMT;
     typedef Eigen::Matrix<NT, Eigen::Dynamic, Eigen::Dynamic> MT;
 
-    Walk(Polytope& P, const Point& p, RandomNumberGenerator& rng,
+    template <typename GenericPolytope>
+    Walk(GenericPolytope& P, const Point& p, RandomNumberGenerator& rng,
             parameters const& user_params,
             const SparseMT& Hessian)
     {
@@ -64,7 +75,11 @@ struct Walk
         initialize(P, p_rounded_point, rng);
     }
 
-    void apply(Polytope& P, Point& p, unsigned int const& walk_length, RandomNumberGenerator& rng)
+    template <typename GenericPolytope>
+    void apply(GenericPolytope& P, 
+            Point& p, 
+            unsigned int const& walk_length,
+            RandomNumberGenerator& rng)
     {
         unsigned int n = P.dimension();
         const NT dl = 0.995;
@@ -104,13 +119,8 @@ struct Walk
                 T -= _lambda_prev;
 
                 P.sparse_compute_reflection(_v, *_oracle_params);
-                // 1. recompute _Ar (A × current position in original coordinates)
-                VT p_round    = _p.getCoefficients();
-                _Ar = _A * _L_inv.transpose()
-                            .template triangularView<Eigen::Lower>()
-                            .solve(p_round);
-
-                // 2. reset the relative displacement for the next segment
+                VT p_round = _p.getCoefficients();
+                _Ar = _A * _L_inv.transpose().template triangularView<Eigen::Lower>().solve(p_round);
                 _lambda_prev = 0;
                 it++;
             }
@@ -151,12 +161,14 @@ private:
     }
 
     template <typename GenericPolytope>
-    void initialize(GenericPolytope& P, const Point& p_rounded, RandomNumberGenerator& rng)
+    void initialize(GenericPolytope& P,
+                    const Point& p_rounded,
+                    RandomNumberGenerator& rng)
     {
         unsigned int n = P.dimension();
         const NT dl = 0.995;
         
-        _p = p_rounded;  // Already in rounded space
+        _p = p_rounded;
         _v = GetDirection<Point>::apply(n, rng);
                 
         _Ar.setZero(_A.rows());
@@ -184,13 +196,8 @@ private:
         T -= _lambda_prev;
         
         P.sparse_compute_reflection(_v, *_oracle_params);
-        // 1. recompute _Ar (A × current position in original coordinates)
-        VT p_round    = _p.getCoefficients();
-        _Ar = _A * _L_inv.transpose()
-                    .template triangularView<Eigen::Lower>()
-                    .solve(p_round);
-
-        // 2. reset the relative displacement for the next segment
+        VT p_round = _p.getCoefficients();
+        _Ar = _A * _L_inv.transpose().template triangularView<Eigen::Lower>().solve(p_round);
         _lambda_prev = 0;
         
         int it = 0;
@@ -213,19 +220,13 @@ private:
             T -= _lambda_prev;
             
             P.sparse_compute_reflection(_v, *_oracle_params);
-            // 1. recompute _Ar (A × current position in original coordinates)
-            VT p_round    = _p.getCoefficients();
-            _Ar = _A * _L_inv.transpose()
-                        .template triangularView<Eigen::Lower>()
-                        .solve(p_round);
-
-            // 2. reset the relative displacement for the next segment
+            VT p_round = _p.getCoefficients();
+            _Ar = _A * _L_inv.transpose().template triangularView<Eigen::Lower>().solve(p_round);
             _lambda_prev = 0;
             it++; 
         }
     }
 
-    // Member variables
     SparseRowMT _A;
     VT _b;
     SparseMT _L_inv;
@@ -247,8 +248,6 @@ private:
         OracleParams(const SparseMT& L, const MT& A, const VT& r)
             : L_inv(L), A_rounded(A), row_norms(r) {}
     };
-
-    // Make this optional
     std::optional<OracleParams> _oracle_params; 
 
 };
