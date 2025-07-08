@@ -678,40 +678,34 @@ public:
         
         VT r_rounded = r.getCoefficients();
         VT v_rounded = v.getCoefficients();
-        
-        Ar.noalias() = params.A_rounded * r_rounded;
-        Av.noalias() = params.A_rounded * v_rounded;
 
         NT lambda_min = std::numeric_limits<NT>::max();
         int facet = -1;
         
-        for (int i = 0; i < Av.size(); ++i)
+        for (int i = 0; i < params.A_original.rows(); ++i)
         {
-            NT av = Av.coeff(i);
-            if (std::abs(av) < NT(1e-12)) continue;
+            const VT& normalized_row = params.get_normalized_A_rounded_row(i);
+            NT av = normalized_row.dot(v_rounded);
+            NT ar = normalized_row.dot(r_rounded);
 
-            NT lambda = (params.b_rounded(i) - Ar(i)) / av; 
+            Ar(i) = ar;
+            Av(i) = av;
+            NT b_r = params.get_b_rounded(i);
 
-            if (lambda > NT(1e-12)) {
-                if (lambda < lambda_min) {
-                    lambda_min = lambda;
-                    facet = i;
-                }
+            NT lambda = (b_r - ar) / av;
+            if (lambda > NT(1e-12) && lambda < lambda_min) {
+                lambda_min = lambda;
+                facet = i;
             }
         }
 
-        // ADD AFTER THE LOOP:
         if (facet != -1) {
-            params.inner_vi_ak = Av.coeff(facet);
+            params.inner_vi_ak = Av(facet);
             params.facet_prev = facet;
         }
 
-        if (facet == -1) {
-            lambda_min = std::numeric_limits<NT>::max();
-        }
-
         return {lambda_min, facet};
-    } 
+    }
 
     template<typename Params>
     std::pair<NT,int> sparse_line_positive_intersect(Point const& r, Point const& v,
@@ -721,18 +715,22 @@ public:
         Ar.noalias() += lambda_prev * Av;
 
         VT v_rounded = v.getCoefficients();
-        Av.noalias() = params.A_rounded * v_rounded;
+        VT r_rounded = r.getCoefficients();  
 
         NT lambda_min = std::numeric_limits<NT>::max();
         int facet = -1;
 
-        for (int i = 0; i < Av.size(); ++i)
+        for (int i = 0; i < params.A_original.rows(); ++i)
         {
-            NT av = Av.coeff(i);
-            if (std::abs(av) < NT(1e-12)) continue;
+            const VT& normalized_row = params.get_normalized_A_rounded_row(i);
+            NT av = normalized_row.dot(v_rounded);
+            NT ar = normalized_row.dot(r_rounded);
 
-            NT lambda = (params.b_rounded(i) - Ar(i)) / av;
+            Ar(i) = ar;
+            Av(i) = av;
+            NT b_r = params.get_b_rounded(i);
 
+            NT lambda = (b_r - ar) / av;
             if (lambda > NT(1e-12) && lambda < lambda_min) {
                 lambda_min = lambda;
                 facet = i;
@@ -740,7 +738,7 @@ public:
         }
 
         if (facet != -1) {
-            params.inner_vi_ak = Av.coeff(facet);
+            params.inner_vi_ak = Av(facet);
             params.facet_prev = facet;
         }
         
@@ -1101,8 +1099,8 @@ public:
     template<typename Params>
     void sparse_compute_reflection(Point &v, Params const &params)
     {
-        VT a_row = params.A_rounded.row(params.facet_prev);
-        v += (-2.0 * params.inner_vi_ak) * Point(a_row);
+        VT normalized_row = params.get_normalized_A_rounded_row(params.facet_prev);
+        v += (-2.0 * params.inner_vi_ak) * Point(normalized_row);
     }
 
     // Only to be called when MT is in RowMajor format
