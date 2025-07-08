@@ -66,7 +66,7 @@ struct Walk
         _b = P.get_vec();
 
         compute_cholesky_and_transformations(Hessian, A);
-        _oracle_params.emplace(_L_inv, _A_rounded, _A_rounded_row_norms);
+        _oracle_params.emplace(_L_inv, _A_rounded, _A_rounded_row_norms, _b_rounded); 
 
         VT p_original = p.getCoefficients();
         VT p_rounded = _L_inv.transpose().template triangularView<Eigen::Lower>() * p_original;
@@ -139,12 +139,18 @@ private:
         _A_rounded = temp.transpose();
         
         _A_rounded_row_norms.setZero(_A_rounded.rows());
+        _b_rounded.setZero(_A_rounded.rows());
+        
         NT* A_rounded_row_norms_data = _A_rounded_row_norms.data();
+        NT* b_rounded_data = _b_rounded.data();
+        
         for (int i = 0; i < _A_rounded.rows(); ++i) {
             NT row_norm = _A_rounded.row(i).norm();
             *A_rounded_row_norms_data = row_norm;
             _A_rounded.row(i) /= row_norm;
+            *b_rounded_data = _b(i) / row_norm;
             A_rounded_row_norms_data++;
+            b_rounded_data++;
         }
     }
 
@@ -213,6 +219,7 @@ private:
     SparseMT _L_inv;
     MT _A_rounded;
     VT _A_rounded_row_norms;
+    VT _b_rounded;
 
     NT _Len;
     Point _p, _v;
@@ -223,11 +230,12 @@ private:
         const SparseMT& L_inv;
         const MT& A_rounded;
         const VT& row_norms;
+        const VT& b_rounded;
         NT inner_vi_ak = NT(0);
         int facet_prev = -1;
 
-        OracleParams(const SparseMT& L, const MT& A, const VT& r)
-            : L_inv(L), A_rounded(A), row_norms(r) {}
+        OracleParams(const SparseMT& L, const MT& A, const VT& r, const VT& b)
+        : L_inv(L), A_rounded(A), row_norms(r), b_rounded(b) {}
     };
     std::optional<OracleParams> _oracle_params; 
 
