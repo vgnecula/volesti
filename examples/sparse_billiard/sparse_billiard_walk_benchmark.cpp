@@ -17,6 +17,7 @@
 #include "cartesian_geom/cartesian_kernel.h"
 #include "sampling/random_point_generators.hpp"
 #include "random_walks/random_walks.hpp"
+#include "random_walks/sparse_uniform_billiard_walk.hpp"
 #include "convex_bodies/hpolytope.h"
 #include "generators/h_polytopes_generator.h"
 #include "generators/known_polytope_generators.h"
