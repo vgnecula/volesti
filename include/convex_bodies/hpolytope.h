@@ -1092,9 +1092,16 @@ public:
     template<typename Params>
     void sparse_compute_reflection(Point &v_rounded, Params const &params) const
     {
-        const VT& normalized_row = params.get_normalized_A_rounded_row(params.facet_prev);
-        NT dot_product = normalized_row.dot(v_rounded.getCoefficients());
-        v_rounded += (-2.0 * dot_product) * Point(normalized_row);
+        // Check if the params object has the required method (for OracleParams)
+        if constexpr (requires(Params p) { p.get_normalized_A_rounded_row(0); }) {
+            const VT& normalized_row = params.get_normalized_A_rounded_row(params.facet_prev);
+            NT dot_product = normalized_row.dot(v_rounded.getCoefficients());
+            v_rounded += (-2.0 * dot_product) * Point(normalized_row);
+        } else {
+            // Fallback for other parameter types - use the standard reflection
+            Point a((-2.0 * params.inner_vi_ak) * A.row(params.facet_prev));
+            v_rounded += a;
+        }
     } 
  
 
