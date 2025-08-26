@@ -41,3 +41,4 @@ Copyright (c) 2018-2024 Apostolos Chalkis\
 Copyright (c) 2020-2024 Elias Tsigaridas
 
 You may redistribute or modify the software under the [GNU Lesser General Public License](/LICENSE) as published by Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY.
+# CI Test - Triggering Clang 12 SIMD test
