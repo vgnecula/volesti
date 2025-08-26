@@ -382,7 +382,12 @@ add_test(NAME test_vaidya_center
 
           
 
-set(ADDITIONAL_FLAGS "-march=native -DSIMD_LEN=0 -DTIME_KEEPING")
+# Disable -march=native when sanitizers are enabled to avoid conflicts
+if(CMAKE_CXX_FLAGS MATCHES "-fsanitize")
+    set(ADDITIONAL_FLAGS "-DSIMD_LEN=0 -DTIME_KEEPING")
+else()
+    set(ADDITIONAL_FLAGS "-march=native -DSIMD_LEN=0 -DTIME_KEEPING")
+endif()
 
 #set_target_properties(benchmarks_crhmc
 #                              PROPERTIES COMPILE_FLAGS ${ADDITIONAL_FLAGS})
